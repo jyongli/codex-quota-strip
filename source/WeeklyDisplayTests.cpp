@@ -17,6 +17,13 @@ BOOL CALLBACK find(HWND window, LPARAM data) {
     return TRUE;
 }
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+bool foreground(HWND window) {
+    // 测试由后台终端启动；沿用生命周期测试的前台授权处理，避免把禁止抢焦点当成布局失败。
+    DWORD active=GetWindowThreadProcessId(GetForegroundWindow(),nullptr),self=GetCurrentThreadId();
+    bool attached=active&&active!=self&&AttachThreadInput(self,active,TRUE);
+    BOOL changed=SetForegroundWindow(window);if(attached)AttachThreadInput(self,active,FALSE);
+    return changed&&GetForegroundWindow()==window;
+}
 bool wait(const std::function<bool()>& condition) {
     auto start = GetTickCount64();
     do { if (condition()) return true; MSG message; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); } Sleep(20); } while (GetTickCount64() - start < 6000);
@@ -38,7 +45,7 @@ int wmain(int argc, wchar_t** argv) {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr); cls.lpfnWndProc = DefWindowProcW; cls.lpszClassName = L"QuotaWeeklyHost"; RegisterClassW(&cls);
         host = CreateWindowExW(0, cls.lpszClassName, L"Weekly quota display fixture", WS_OVERLAPPEDWINDOW, 200, 120, 900, 700, nullptr, nullptr, cls.hInstance, nullptr);
-        ShowWindow(host, SW_SHOW); SetForegroundWindow(host);
+        ShowWindow(host, SW_SHOW);check(foreground(host),"Synthetic host must become foreground before testing its overlay");
         std::wstring command = L"\"" + std::filesystem::absolute(argv[1]).wstring() + L"\" --local-only --taskbar-and-codex --left --host-pid " + std::to_wstring(GetCurrentProcessId()) + L" --home \"" + root.wstring() + L"\" --status \"" + status.wstring() + L"\"";
         STARTUPINFOW start{}; start.cb = sizeof(start);
         check(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &start, &process), "Weekly display fixture must launch"); target.pid = process.dwProcessId;
