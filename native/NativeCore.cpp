@@ -192,6 +192,7 @@ Preferences Load(const std::filesystem::path& file) {
             else if (key == "only_with_codex") next.onlyWithCodex = value == "1";
             else if (key == "overlay") next.overlay = value == "1";
             else if (key == "position") next.left = value == "left";
+            else if (key == "language") next.chinese = value == "zh-CN";
             else if (key == "home") next.home = value;
             else if (key == "binary") next.binary = value;
             else if (key == "host") next.host = value;
@@ -209,7 +210,7 @@ bool Save(const std::filesystem::path& file, const Preferences& value) {
         std::ostringstream text;
         text << "seconds=" << value.seconds << "\nstale_minutes=" << value.staleMinutes << "\nonline=" << value.online
              << "\nonly_with_codex=" << value.onlyWithCodex << "\noverlay=" << value.overlay << "\nposition=" << (value.left ? "left" : "top")
-             << "\nhome=" << value.home << "\nbinary=" << value.binary << "\nhost=" << value.host << '\n';
+             << "\nhome=" << value.home << "\nbinary=" << value.binary << "\nhost=" << value.host << "\nlanguage=" << (value.chinese ? "zh-CN" : "en") << '\n';
         auto bytes = text.str(); size_t offset = 0;
         while (offset < bytes.size()) { auto count = write(out.value, bytes.data() + offset, bytes.size() - offset); if (count < 0 && errno == EINTR) continue; if (count <= 0) { unlink(temporary.c_str()); return false; } offset += static_cast<size_t>(count); }
         if (rename(temporary.c_str(), file.c_str())) { unlink(temporary.c_str()); return false; }

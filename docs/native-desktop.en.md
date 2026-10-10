@@ -6,7 +6,7 @@ The native version uses C++17, GTK3/Ayatana indicators on Linux and AppKit on ma
 
 ## Downloads and platforms
 
-[Download the native preview](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.1)
+[Download the native preview](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.2)
 
 | Artifact | Environment |
 | --- | --- |
@@ -67,7 +67,7 @@ See the [official CLI guide](https://learn.chatgpt.com/docs/codex/cli) for insta
 
 ## Settings and commands
 
-The native preview UI is English; the Windows UI remains Chinese. Queries default to every 120 seconds (30–3600); the stale threshold defaults to 5 minutes (1–120).
+All three platforms support Chinese/English UI switching. Native previews default to English. Select `中文` or `English` under `Language`, then save and apply; changes take effect immediately and persist across restarts (`language=zh-CN` or `language=en` in settings.ini). Queries default to every 120 seconds (30–3600); the stale threshold defaults to 5 minutes (1–120).
 
 | Setting | Meaning |
 | --- | --- |
@@ -75,6 +75,7 @@ The native preview UI is English; the Windows UI remains Chinese. Queries defaul
 | `Query only while the host … is open` | Schedule queries only when a host desktop app is detected; disable for CLI-only use. Manual refresh bypasses the host condition |
 | `Show window-following overlay` | Show the foreground host's strip; requires macOS Accessibility or Linux X11 |
 | `Overlay position` | Top or Left |
+| `Language` | Chinese or English; applies immediately after saving |
 | `Codex data directory` | Absolute directory for the signed-in account |
 | `Codex executable` | Blank for discovery, or an explicit local executable path |
 | `Host … contains` | Match an app name/bundle ID on macOS or window class on Linux |

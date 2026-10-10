@@ -4,9 +4,9 @@
 
 A lightweight Windows, Linux and macOS utility displaying **remaining five-hour quota** and **remaining weekly quota** in the tray/menu bar, with an optional window-following strip.
 
-Built with C++17 and native platform APIs, without Electron or WebView. This is an independent companion, not affiliated with OpenAI. The Windows UI is Chinese; native Linux/macOS preview UIs are English. See [README.md](README.md) for the Chinese guide.
+Built with C++17 and native platform APIs, without Electron or WebView. This is an independent companion, not affiliated with OpenAI. All three platforms support Chinese/English switching in Settings; save and apply for immediate changes that persist across restarts. Translations are local. See [README.md](README.md) for the Chinese guide.
 
-**[Download v3.0.0-preview.1](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.1)** · [Linux/macOS installation and build guide](docs/native-desktop.en.md)
+**[Download v3.0.0-preview.2](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.2)** · [Linux/macOS installation and build guide](docs/native-desktop.en.md)
 
 Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 
@@ -177,6 +177,7 @@ stale_minutes=5
 [display]
 surface=taskbar
 position=top
+language=zh-CN
 ```
 
 | Field | Default | Meaning and range |
@@ -187,6 +188,7 @@ position=top
 | `stale_minutes` | `5` | stale threshold, 1–120 minutes; does not trigger extra queries |
 | `surface` | `taskbar` | `taskbar` or `taskbar-and-codex` |
 | `position` | `top` | `top` or `left`; applies only to the strip |
+| `language` | `zh-CN` | `zh-CN` for Chinese, `en` for English; saved changes apply immediately and persist across restarts |
 
 Before manual edits, exit the matching instance and wait for it to finish, then back up the file; restart after saving. Generate the file first by saving from the settings window.
 

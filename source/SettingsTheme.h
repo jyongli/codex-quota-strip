@@ -49,7 +49,7 @@ inline void paintControl(HWND h,HDC dc){
         RECT thumb{x,track.top+theme.px(3),x+theme.px(14),track.bottom-theme.px(3)};
         rounded(dc,thumb,checked?AccentText:Text,checked?AccentText:Text,14);
         if(focus){RECT ring=r;InflateRect(&ring,-1,-1);DrawFocusRect(dc,&ring);}
-    }else if(id==204){
+    }else if(id==204||id==208){
         rounded(dc,r,Field,focus?Accent:Border);
         wchar_t label[180]{};LRESULT selected=SendMessageW(h,CB_GETCURSEL,0,0);if(selected>=0)SendMessageW(h,CB_GETLBTEXT,selected,reinterpret_cast<LPARAM>(label));
         RECT value=r;value.left+=theme.px(12);value.right-=theme.px(34);text(dc,label,value,theme.body,Text);
@@ -92,10 +92,11 @@ inline void layout(HWND h){
     move(211,44,138,244,46);move(212,330,138,244,46);move(206,44,208,530,20);
     move(201,24,293,572,28);move(203,24,446,572,28);
     move(202,36,378,204,22);move(205,334,378,204,22);move(204,176,504,420,36);
-    move(207,24,550,572,26);move(301,24,588,132,36);move(302,346,588,152,36);move(303,512,588,84,36);
-    for(int id:{201,202,203,204,205,207,301,302,303})SendMessageW(GetDlgItem(h,id),WM_SETFONT,reinterpret_cast<WPARAM>(theme.body),TRUE);
+    move(208,176,548,420,36);move(207,24,590,572,26);move(301,24,628,132,36);move(302,346,628,152,36);move(303,512,628,84,36);
+    for(int id:{201,202,203,204,205,207,208,301,302,303})SendMessageW(GetDlgItem(h,id),WM_SETFONT,reinterpret_cast<WPARAM>(theme.body),TRUE);
     for(int id:{211,212})SendMessageW(GetDlgItem(h,id),WM_SETFONT,reinterpret_cast<WPARAM>(theme.value),TRUE);
     SendMessageW(GetDlgItem(h,206),WM_SETFONT,reinterpret_cast<WPARAM>(theme.smallFont),TRUE);
     SendMessageW(GetDlgItem(h,204),CB_SETITEMHEIGHT,static_cast<WPARAM>(-1),theme.px(30));SendMessageW(GetDlgItem(h,204),CB_SETITEMHEIGHT,0,theme.px(32));
+    SendMessageW(GetDlgItem(h,208),CB_SETITEMHEIGHT,static_cast<WPARAM>(-1),theme.px(30));SendMessageW(GetDlgItem(h,208),CB_SETITEMHEIGHT,0,theme.px(32));
 }
 }

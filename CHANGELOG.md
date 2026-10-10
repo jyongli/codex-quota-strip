@@ -1,5 +1,11 @@
 # 变更记录 / Changelog
 
+## v3.0.0-preview.2 — 2026-10-10
+
+- Windows／Linux／macOS 配置窗口加入中英文语言选择；保存后即时更新菜单、界面和状态提示，并持久化选择。 / Added persisted Chinese/English selection with live menu, UI and status translation on all three platforms.
+- 翻译使用内置字典，不增加网络请求或常驻翻译进程。 / Uses built-in translations without network calls or a translation process.
+- 中文 `README.md` 与英文 `README.en.md` 保持独立内容和相互切换链接。 / Keeps independent Chinese and English README files with language-switch links.
+
 ## v3.0.0-preview.1 — 2026-10-10
 
 - 添加 Linux x64 托盘／X11 悬浮条和 macOS 通用菜单栏／辅助功能悬浮条原生预览版。 / Added native Linux x64 tray/X11 overlay and universal macOS menu bar/Accessibility overlay previews.

@@ -12,11 +12,12 @@ int main(int argc, char** argv) {
         auto settings = nativequota::Defaults(); settings.home = (root / "home with spaces").string();
         std::filesystem::create_directories(settings.home);
         { std::ofstream auth(std::filesystem::path(settings.home) / "auth.json"); auth << "synthetic-account-a"; }
-        settings.seconds = 45; settings.staleMinutes = 2; settings.left = true; settings.onlyWithCodex = false;
+        settings.seconds = 45; settings.staleMinutes = 2; settings.left = true; settings.onlyWithCodex = false; settings.chinese = true;
         auto file = root / "settings.ini";
         require(nativequota::Save(file, settings), "Valid settings must save");
         auto restored = nativequota::Load(file);
         require(restored.seconds == 45 && restored.staleMinutes == 2 && restored.left && restored.home == settings.home, "Settings must persist across restart");
+        require(restored.chinese, "Native UI language must persist across restart");
         struct stat attributes{}; stat(file.c_str(), &attributes);
         require((attributes.st_mode & 0777) == 0600, "Settings must be private to the current user");
         settings.seconds = 0; require(!nativequota::Save(file, settings) && nativequota::Load(file).seconds == 45, "Invalid settings must not overwrite valid file"); settings.seconds = 45;

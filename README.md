@@ -4,9 +4,9 @@
 
 Windows、Linux 和 macOS 上的轻量 Codex 配额工具，显示 **5 小时剩余配额** 和 **周剩余配额**，支持托盘／菜单栏及窗口跟随配额条。
 
-使用 C++17 和原生系统接口，不依赖 Electron 或 WebView。它是独立的辅助程序，与 OpenAI 没有官方隶属关系。Windows 界面为中文，原生 Linux／macOS 预览界面为英文；英文说明见 [README.en.md](README.en.md)。
+使用 C++17 和原生系统接口，不依赖 Electron 或 WebView。它是独立的辅助程序，与 OpenAI 没有官方隶属关系。三平台均可在设置中切换中文／English 并保存，立即生效；翻译在本机完成。英文说明见 [README.en.md](README.en.md)。
 
-**[下载 v3.0.0-preview.1](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.1)** · [Linux／macOS 安装与构建](docs/native-desktop.zh-CN.md)
+**[下载 v3.0.0-preview.2](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.2)** · [Linux／macOS 安装与构建](docs/native-desktop.zh-CN.md)
 
 下文的命令及详细配置主要针对 Windows；Linux／macOS 请使用上面的独立原生指南。
 
@@ -177,6 +177,7 @@ stale_minutes=5
 [display]
 surface=taskbar
 position=top
+language=zh-CN
 ```
 
 | 字段 | 默认 | 含义与范围 |
@@ -187,6 +188,7 @@ position=top
 | `stale_minutes` | `5` | 旧快照阈值 1–120 分钟，不触发额外查询 |
 | `surface` | `taskbar` | `taskbar` 或 `taskbar-and-codex` |
 | `position` | `top` | `top` 或 `left`，仅配额条生效 |
+| `language` | `zh-CN` | `zh-CN` 中文或 `en` 英文；保存后立即应用并在重启时保留 |
 
 手动编辑前退出对应实例并等待结束，再备份；保存后重启。可先在配置窗口保存一次生成文件。
 

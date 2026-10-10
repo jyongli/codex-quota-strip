@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #include "NativeCore.h"
+#include "Localization.h"
 #include <unistd.h>
 #include <signal.h>
 #include <sys/resource.h>
@@ -27,6 +28,7 @@ static NSString* Text(const std::string& value) { return [[NSString alloc] initW
     NSTextField *status, *seconds, *stale, *home, *binary, *hostName;
     NSButton *online, *only, *show;
     NSPopUpButton* position;
+    NSPopUpButton* language;
     AXObserverRef observer;
     AXUIElementRef application, focused;
     pid_t observedPid;
@@ -43,10 +45,17 @@ static NSString* Text(const std::string& value) { return [[NSString alloc] initW
 - (void)refresh:(id)sender;
 - (void)permission:(id)sender;
 - (void)quit:(id)sender;
+- (NSString*)ui:(NSString*)english;
+- (void)translateMenu;
 @end
 static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context) { [(__bridge QuotaDelegate*)context updateHost]; }
 
 @implementation QuotaDelegate
+- (NSString*)ui:(NSString*)english { return Text(Translate(english.UTF8String ?: "",engine && engine->preferences().chinese)); }
+- (void)translateMenu {
+    NSArray* labels=@[@"Refresh now",@"Settings…",@"Allow window following…",@"Quit"];
+    for(NSUInteger i=0;i<labels.count;++i)[statusItem.menu itemAtIndex:i].title=[self ui:labels[i]];
+}
 - (BOOL)matches:(NSRunningApplication*)app {
     if (!app || app.processIdentifier == getpid()) return NO;
     auto prefs = engine->preferences();
@@ -66,6 +75,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
         NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""]; item.target = self; [menu addItem:item];
     }
     statusItem.menu = menu;
+    [self translateMenu];
     strip = [[QuotaPanel alloc] initWithContentRect:NSMakeRect(0, 0, 248, 28) styleMask:NSWindowStyleMaskNonactivatingPanel backing:NSBackingStoreBuffered defer:NO];
     strip.opaque = NO; strip.backgroundColor = [NSColor colorWithRed:.12 green:.13 blue:.15 alpha:.97]; strip.level = NSFloatingWindowLevel;
     strip.ignoresMouseEvents = YES; strip.hidesOnDeactivate = NO;
@@ -88,11 +98,12 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     [self update]; [self updateHost];
     if (options.settings) [self openSettings:nil];
     if (options.smoke) {
-        [self openSettings:nil]; seconds.stringValue = @"45"; [self apply:nil];
+        [self openSettings:nil]; seconds.stringValue = @"45";[language selectItemAtIndex:0]; [self apply:nil];
         auto stored = Load(configRoot / "settings.ini");
         auto frame = Placement({100, 50, 900, 600}, false);
         [strip setFrame:NSMakeRect(frame.x, frame.y, frame.width, frame.height) display:YES]; [strip orderFront:nil];
-        BOOL passed = statusItem.button != nil && config.isVisible && engine->preferences().seconds == 45 && stored.seconds == 45 && !strip.canBecomeKeyWindow;
+        BOOL passed = statusItem.button != nil && config.isVisible && engine->preferences().seconds == 45 && stored.seconds == 45 && stored.chinese && [config.title isEqualToString:@"Codex 配额 — 设置"] && !strip.canBecomeKeyWindow;
+        [language selectItemAtIndex:1];[self apply:nil];passed=passed&&[config.title isEqualToString:@"Codex Quota — Settings"]&&!Load(configRoot/"settings.ini").chinese;
         [strip orderOut:nil]; self.smokePassed = passed && !strip.isVisible;
         std::cout << (self.smokePassed ? "PASS: macOS menu bar, native settings persistence, passive overlay and hide lifecycle\n" : "FAIL: macOS native UI smoke test\n");
         [config close];
@@ -156,52 +167,55 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     stripText.textColor = Stale(current, prefs, now) ? NSColor.lightGrayColor : NSColor.whiteColor;
     if (lastWeeklyOnly != weeklyOnly) { lastWeeklyOnly = weeklyOnly; [self updateHost]; }
     if (status) {
-        std::string detail = text + "\n" + (current.refreshing ? "Refreshing…" : !current.error.empty() ? current.error : !prefs.online ? "Online queries disabled" : "Account quota");
-        if (!options.smoke && prefs.overlay && !AXIsProcessTrusted()) detail += "\nAllow Accessibility access to follow Codex windows.";
+        std::string detail = text + "\n" + Translate(current.refreshing ? "Refreshing…" : !current.error.empty() ? current.error.c_str() : !prefs.online ? "Online queries disabled" : "Account quota",prefs.chinese);
+        if (!options.smoke && prefs.overlay && !AXIsProcessTrusted()) detail += Translate("\nAllow Accessibility access to follow Codex windows.",prefs.chinese);
         status.stringValue = Text(detail);
     }
 }
 - (NSTextField*)label:(NSString*)title y:(CGFloat)y {
-    auto label = [NSTextField labelWithString:title]; label.frame = NSMakeRect(24, y, 235, 24); [config.contentView addSubview:label]; return label;
+    auto label = [NSTextField labelWithString:[self ui:title]]; label.frame = NSMakeRect(24, y, 235, 24); [config.contentView addSubview:label]; return label;
 }
 - (NSTextField*)field:(NSString*)title value:(NSString*)value y:(CGFloat)y {
     [self label:title y:y]; auto input = [[NSTextField alloc] initWithFrame:NSMakeRect(260, y, 276, 24)]; input.stringValue = value; [config.contentView addSubview:input]; return input;
 }
 - (NSButton*)check:(NSString*)title enabled:(BOOL)enabled y:(CGFloat)y {
-    auto button = [NSButton checkboxWithTitle:title target:nil action:nil]; button.frame = NSMakeRect(24, y, 500, 25); button.state = enabled ? NSControlStateValueOn : NSControlStateValueOff; [config.contentView addSubview:button]; return button;
+    auto button = [NSButton checkboxWithTitle:[self ui:title] target:nil action:nil]; button.frame = NSMakeRect(24, y, 500, 25); button.state = enabled ? NSControlStateValueOn : NSControlStateValueOff; [config.contentView addSubview:button]; return button;
 }
 - (void)openSettings:(id)sender {
     (void)sender;
     if (config) { [NSApp activateIgnoringOtherApps:YES]; [config makeKeyAndOrderFront:nil]; return; }
     auto prefs = engine->preferences();
     config = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 560, 610) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
-    config.title = @"Codex Quota — Settings"; config.releasedWhenClosed = NO; config.delegate = self;
+    config.title = [self ui:@"Codex Quota — Settings"]; config.releasedWhenClosed = NO; config.delegate = self;
     status = [NSTextField wrappingLabelWithString:@""]; status.frame = NSMakeRect(24, 510, 512, 76); status.font = [NSFont systemFontOfSize:14]; [config.contentView addSubview:status];
     online = [self check:@"Query Codex account online" enabled:prefs.online y:470];
     only = [self check:@"Query only while the host application is open" enabled:prefs.onlyWithCodex y:436];
     show = [self check:@"Show window-following overlay" enabled:prefs.overlay y:402];
     seconds = [self field:@"Refresh interval (30–3600 s)" value:Text(std::to_string(prefs.seconds)) y:360];
     stale = [self field:@"Stale after (1–120 min)" value:Text(std::to_string(prefs.staleMinutes)) y:322];
-    [self label:@"Overlay position" y:284]; position = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(260, 284, 276, 26) pullsDown:NO]; [position addItemsWithTitles:@[@"Top", @"Left"]]; [position selectItemAtIndex:prefs.left ? 1 : 0]; [config.contentView addSubview:position];
+    [self label:@"Overlay position" y:284]; position = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(260, 284, 276, 26) pullsDown:NO]; [position addItemsWithTitles:@[[self ui:@"Top"], [self ui:@"Left"]]]; [position selectItemAtIndex:prefs.left ? 1 : 0]; [config.contentView addSubview:position];
     home = [self field:@"Codex data directory" value:Text(prefs.home) y:246];
     binary = [self field:@"Codex executable (blank = auto)" value:Text(prefs.binary) y:208];
     hostName = [self field:@"Host application contains" value:Text(prefs.host) y:170];
-    auto permission = [NSButton buttonWithTitle:@"Allow Accessibility…" target:self action:@selector(permission:)]; permission.frame = NSMakeRect(24, 115, 230, 32); [config.contentView addSubview:permission];
-    auto refresh = [NSButton buttonWithTitle:@"Refresh now" target:self action:@selector(refresh:)]; refresh.frame = NSMakeRect(24, 30, 130, 34); [config.contentView addSubview:refresh];
-    auto apply = [NSButton buttonWithTitle:@"Save and apply" target:self action:@selector(apply:)]; apply.frame = NSMakeRect(380, 30, 156, 34); apply.keyEquivalent = @"\r"; [config.contentView addSubview:apply];
+    [self label:@"Language" y:132];language=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(260,132,276,26)pullsDown:NO];[language addItemsWithTitles:@[@"中文",@"English"]];[language selectItemAtIndex:prefs.chinese?0:1];[config.contentView addSubview:language];
+    auto permission = [NSButton buttonWithTitle:[self ui:@"Allow Accessibility…"] target:self action:@selector(permission:)]; permission.frame = NSMakeRect(24, 85, 230, 32); [config.contentView addSubview:permission];
+    auto refresh = [NSButton buttonWithTitle:[self ui:@"Refresh now"] target:self action:@selector(refresh:)]; refresh.frame = NSMakeRect(24, 30, 130, 34); [config.contentView addSubview:refresh];
+    auto apply = [NSButton buttonWithTitle:[self ui:@"Save and apply"] target:self action:@selector(apply:)]; apply.frame = NSMakeRect(380, 30, 156, 34); apply.keyEquivalent = @"\r"; [config.contentView addSubview:apply];
     [config center]; [self update]; [NSApp activateIgnoringOtherApps:YES]; [config makeKeyAndOrderFront:nil];
 }
 - (void)windowWillClose:(NSNotification*)notification {
-    if (notification.object == config) { config = nil; status = nil; seconds = nil; stale = nil; home = nil; binary = nil; hostName = nil; online = nil; only = nil; show = nil; position = nil; }
+    if (notification.object == config) { config = nil; status = nil; seconds = nil; stale = nil; home = nil; binary = nil; hostName = nil; online = nil; only = nil; show = nil; position = nil; language=nil; }
 }
 - (void)apply:(id)sender {
     (void)sender; auto prefs = engine->preferences();
     auto number = [](NSString* value, int& result) { NSScanner* scanner = [NSScanner scannerWithString:value]; NSInteger parsed; if (![scanner scanInteger:&parsed] || !scanner.isAtEnd || parsed < 0 || parsed > 3600) return false; result = static_cast<int>(parsed); return true; };
-    if (!number(seconds.stringValue, prefs.seconds) || !number(stale.stringValue, prefs.staleMinutes)) { status.stringValue = @"Enter valid whole-number intervals."; return; }
+    if (!number(seconds.stringValue, prefs.seconds) || !number(stale.stringValue, prefs.staleMinutes)) { status.stringValue = [self ui:@"Enter valid whole-number intervals."]; return; }
     prefs.online = online.state == NSControlStateValueOn; prefs.onlyWithCodex = only.state == NSControlStateValueOn; prefs.overlay = show.state == NSControlStateValueOn; prefs.left = position.indexOfSelectedItem == 1;
+    bool changedLanguage=prefs.chinese!=(language.indexOfSelectedItem==0);prefs.chinese=language.indexOfSelectedItem==0;
     prefs.home = home.stringValue.UTF8String ?: ""; prefs.binary = binary.stringValue.UTF8String ?: ""; prefs.host = hostName.stringValue.UTF8String ?: "";
-    if (!Save(configRoot / "settings.ini", prefs)) { status.stringValue = @"Cannot save: check absolute home path, values and permissions."; return; }
+    if (!Save(configRoot / "settings.ini", prefs)) { status.stringValue = [self ui:@"Cannot save: check absolute home path, values and permissions."]; return; }
     engine->configure(prefs); [self updateHost]; [self update];
+    if(changedLanguage){[self translateMenu];[config close];[self openSettings:nil];}
 }
 - (void)refresh:(id)sender { (void)sender; if (engine) engine->refresh(); }
 - (void)permission:(id)sender {

@@ -3,6 +3,7 @@
 #include "QuotaSettings.h"
 #include "QuotaProvider.h"
 #include "SettingsTheme.h"
+#include "Localization.h"
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -65,6 +66,7 @@ void RequestCloud(bool manual=false);
 void UpdateState();
 void PositionStrip();
 quota::Settings GetPreferences(){std::lock_guard<std::mutex> lock(preferencesMutex);return preferences;}
+const wchar_t* Ui(const wchar_t* value){return quota::Translate(value,GetPreferences().english);}
 bool IsStale(const Data& s,long long now){return !s.snapshot.observed || now-s.snapshot.observed>=GetPreferences().staleMinutes*60000LL || (!s.watching&&!s.fromServer);}
 int px(int x) { return MulDiv(x, static_cast<int>(dpi), 96); }
 std::wstring Lower(std::wstring s) { for (auto& c : s) c = static_cast<wchar_t>(std::towlower(c)); return s; }
@@ -79,7 +81,7 @@ Data GetData() { std::lock_guard<std::mutex> lock(dataMutex); return data; }
 void SignalState() { if (controller) PostMessageW(controller, StateChanged, 0, 0); }
 
 std::wstring LocalTime(long long milliseconds) {
-    if (milliseconds <= 0) return L"尚无数据";
+    if (milliseconds <= 0) return Ui(L"尚无数据");
     ULARGE_INTEGER u{}; u.QuadPart = static_cast<unsigned long long>(milliseconds + 11644473600000LL) * 10000;
     FILETIME utc{u.LowPart,u.HighPart}, local{}; SYSTEMTIME t{};
     FileTimeToLocalFileTime(&utc, &local); FileTimeToSystemTime(&local, &t);
@@ -289,12 +291,12 @@ void UpdateFonts(UINT nextDpi) {
 void PositionStrip() {
     if (headless) return;
     if(!window){
-        window=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,windowClass.c_str(),L"Codex 配额条 2.0",WS_POPUP,0,0,236,26,nullptr,nullptr,instance,nullptr);lastVisible=false;
+        window=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,windowClass.c_str(),Ui(L"Codex 配额条 2.0"),WS_POPUP,0,0,236,26,nullptr,nullptr,instance,nullptr);lastVisible=false;
         // 显示条重建时一并重建其提示框；所属主窗口销毁不会遗留提示窗口。
         if(window){
             tooltip=CreateWindowExW(WS_EX_TOPMOST,TOOLTIPS_CLASSW,nullptr,WS_POPUP|TTS_ALWAYSTIP|TTS_NOPREFIX,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,window,nullptr,instance,nullptr);
             SendMessageW(tooltip,TTM_SETMAXTIPWIDTH,0,500);SendMessageW(tooltip,TTM_SETDELAYTIME,TTDT_INITIAL,450);
-            TOOLINFOW info{sizeof(info)};info.uFlags=TTF_IDISHWND|TTF_SUBCLASS;info.hwnd=window;info.uId=reinterpret_cast<UINT_PTR>(window);info.lpszText=const_cast<wchar_t*>(L"等待用量数据");SendMessageW(tooltip,TTM_ADDTOOLW,0,reinterpret_cast<LPARAM>(&info));
+            TOOLINFOW info{sizeof(info)};info.uFlags=TTF_IDISHWND|TTF_SUBCLASS;info.hwnd=window;info.uId=reinterpret_cast<UINT_PTR>(window);info.lpszText=const_cast<wchar_t*>(Ui(L"等待用量数据"));SendMessageW(tooltip,TTM_ADDTOOLW,0,reinterpret_cast<LPARAM>(&info));
         }
     }
     if(!window)return;
@@ -359,23 +361,23 @@ void PaintStrip(HDC target) {
     SelectObject(dc, oldBrush); SelectObject(dc, oldPen); DeleteObject(pen);
     if (quota::WeeklyOnly(s.snapshot)) {
         if (leftSide) {
-            DrawTextAt(dc, L"周", {0,px(5),r.right,px(25)}, smallFont, RGB(167,167,167), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawTextAt(dc, Ui(L"周"), {0,px(5),r.right,px(25)}, smallFont, RGB(167,167,167), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             DrawTextAt(dc, quota::Remaining(week), {0,px(27),r.right,px(51)}, smallFont, NumberColor(week, stale), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         } else {
-            DrawTextAt(dc, L"周", {px(12),0,px(40),r.bottom}, smallFont, RGB(167,167,167));
+            DrawTextAt(dc, Ui(L"周"), {px(12),0,px(40),r.bottom}, smallFont, RGB(167,167,167));
             DrawTextAt(dc, quota::Remaining(week), {px(45),0,px(106),r.bottom}, font, NumberColor(week, stale));
         }
     } else if (!leftSide) {
-        DrawTextAt(dc, L"5小时", {px(11),0,px(53),r.bottom}, smallFont, RGB(167,167,167));
+        DrawTextAt(dc, Ui(L"5小时"), {px(11),0,px(53),r.bottom}, smallFont, RGB(167,167,167));
         DrawTextAt(dc, quota::Remaining(five), {px(60),0,px(117),r.bottom}, font, NumberColor(five, stale));
-        DrawTextAt(dc, L"周", {px(133),0,px(153),r.bottom}, smallFont, RGB(167,167,167));
+        DrawTextAt(dc, Ui(L"周"), {px(133),0,px(153),r.bottom}, smallFont, RGB(167,167,167));
         DrawTextAt(dc, quota::Remaining(week), {px(164),0,px(224),r.bottom}, font, NumberColor(week, stale));
         auto line = CreatePen(PS_SOLID, 1, RGB(60,60,60)); auto p = SelectObject(dc, line); MoveToEx(dc, px(123), px(7), nullptr); LineTo(dc, px(123), r.bottom - px(7)); SelectObject(dc, p); DeleteObject(line);
     } else {
         UINT center = DT_CENTER | DT_VCENTER | DT_SINGLELINE;
         DrawTextAt(dc, L"5h", {0,px(5),r.right,px(25)}, smallFont, RGB(167,167,167), center);
         DrawTextAt(dc, quota::Remaining(five), {0,px(25),r.right,px(50)}, smallFont, NumberColor(five, stale), center);
-        DrawTextAt(dc, L"周", {0,px(58),r.right,px(78)}, smallFont, RGB(167,167,167), center);
+        DrawTextAt(dc, Ui(L"周"), {0,px(58),r.right,px(78)}, smallFont, RGB(167,167,167), center);
         DrawTextAt(dc, quota::Remaining(week), {0,px(78),r.right,px(103)}, smallFont, NumberColor(week, stale), center);
     }
     BitBlt(target, 0, 0, r.right, r.bottom, dc, 0, 0, SRCCOPY);
@@ -388,7 +390,7 @@ void UpdateTray(const Data& s, bool force = false) {
     bool stale = IsStale(s,now);
     int size = std::max(32, GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem()) * 2);
     const wchar_t* captions[]{L"5h",L"W"};
-    const wchar_t* names[]{L"5小时",L"周"};
+    const wchar_t* names[]{Ui(L"5小时"),Ui(L"周")};
     static auto hash = [] {
         wchar_t module[32768]{}; DWORD length = static_cast<DWORD>(std::size(module));
         // Store-app file redirection can make the loaded path differ from its logical launch path.
@@ -405,10 +407,10 @@ void UpdateTray(const Data& s, bool force = false) {
         std::wstring full = quota::Remaining(values[i]), value = full;
         if (!value.empty() && value.back() == L'%') value.pop_back();
         std::wstring key = value + (stale ? L"/stale/" : L"/fresh/") + std::to_wstring(size);
-        std::wstring tip = std::wstring(L"Codex ") + names[i] + L"剩余 " + full + L"\n最后事件：" + LocalTime(s.snapshot.observed);
-        if (values[i].resets) tip += L"\n重置：" + LocalTime(values[i].resets * 1000);
-        if (stale && values[i].present) tip += L"\n旧快照，等待本机新事件";
-        if (!values[i].present) tip += L"\n服务未提供此窗口，或等待重置后的新事件";
+        std::wstring tip = std::wstring(L"Codex ") + names[i] + Ui(L"剩余 ") + full + Ui(L"\n最后事件：") + LocalTime(s.snapshot.observed);
+        if (values[i].resets) tip += Ui(L"\n重置：") + LocalTime(values[i].resets * 1000);
+        if (stale && values[i].present) tip += Ui(L"\n旧快照，等待本机新事件");
+        if (!values[i].present) tip += Ui(L"\n服务未提供此窗口，或等待重置后的新事件");
         if (!force && trayAdded[i] && key == trayRenderKeys[i] && tip == trayTips[i]) continue;
         bool redraw = force || key != trayRenderKeys[i] || !trays[i].hIcon;
         COLORREF tint = !values[i].present || stale ? RGB(175,175,175) : 100 - values[i].used <= 20 ? RGB(246,183,92) : i == 0 ? RGB(100,190,245) : RGB(105,210,160);
@@ -457,15 +459,15 @@ void UpdateState() {
     std::wstring text = quota::Remaining(five) + L"/" + quota::Remaining(week) + (stale ? L"/stale" : L"");
     bool displayChanged = text != paintedText;
     if (displayChanged) { paintedText = text; if(window)InvalidateRect(window, nullptr, FALSE); }
-    tipText = quota::WeeklyOnly(s.snapshot) ? L"剩余配额：周 " + quota::Remaining(week) : L"剩余配额：5小时 " + quota::Remaining(five) + L"；周 " + quota::Remaining(week);
-    tipText += L"\n数据时间：" + LocalTime(s.snapshot.observed);
-    tipText += s.fromServer?L"\n来源：账户查询":L"\n来源：本机会话快照";
-    if(!s.queryError.empty())tipText+=L"\n查询失败，保留旧值："+s.queryError;
-    if (five.resets) tipText += L"\n5小时重置时间：" + LocalTime(five.resets * 1000);
-    if (week.resets) tipText += L"\n周重置时间：" + LocalTime(week.resets * 1000);
-    if (stale) tipText += L"\n灰色数值是旧快照，等待本机新事件。";
-    if (s.error) tipText += L"\n本机日志监听不可用，错误码：" + std::to_wstring(s.error);
-    tipText += L"\n右键可打开配置或立即刷新；双击立即刷新。";
+    tipText = quota::WeeklyOnly(s.snapshot) ? Ui(L"剩余配额：周 ") + quota::Remaining(week) : Ui(L"剩余配额：5小时 ") + quota::Remaining(five) + Ui(L"；周 ") + quota::Remaining(week);
+    tipText += Ui(L"\n数据时间：") + LocalTime(s.snapshot.observed);
+    tipText += s.fromServer?Ui(L"\n来源：账户查询"):Ui(L"\n来源：本机会话快照");
+    if(!s.queryError.empty())tipText+=std::wstring(Ui(L"\n查询失败，保留旧值："))+Ui(s.queryError.c_str());
+    if (five.resets) tipText += Ui(L"\n5小时重置时间：") + LocalTime(five.resets * 1000);
+    if (week.resets) tipText += Ui(L"\n周重置时间：") + LocalTime(week.resets * 1000);
+    if (stale) tipText += Ui(L"\n灰色数值是旧快照，等待本机新事件。");
+    if (s.error) tipText += Ui(L"\n本机日志监听不可用，错误码：") + std::to_wstring(s.error);
+    tipText += Ui(L"\n右键可打开配置或立即刷新；双击立即刷新。");
     if (tooltip) {
         TOOLINFOW info{sizeof(info)}; info.hwnd = window; info.uId = reinterpret_cast<UINT_PTR>(window); info.lpszText = const_cast<wchar_t*>(tipText.c_str());
         SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&info));
@@ -474,10 +476,10 @@ void UpdateState() {
     PositionStrip();
     ScheduleNextWake(s); AtomicStatus(s);
     if(settingsWindow){
-        std::wstring summary=L"更新 "+LocalTime(s.snapshot.observed)+(s.fromServer?L" · 账户查询":L" · 本地快照");
-        if(s.refreshing)summary+=L" · 正在刷新";
-        else if(!s.queryError.empty())summary=L"刷新失败 · "+s.queryError+L"，保留上次数据";
-        else if(stale)summary+=L" · 等待新数据";
+        std::wstring summary=std::wstring(Ui(L"更新 "))+LocalTime(s.snapshot.observed)+(s.fromServer?Ui(L" · 账户查询"):Ui(L" · 本地快照"));
+        if(s.refreshing)summary+=Ui(L" · 正在刷新");
+        else if(!s.queryError.empty())summary=std::wstring(Ui(L"刷新失败 · "))+Ui(s.queryError.c_str())+Ui(L"，保留上次数据");
+        else if(stale)summary+=Ui(L" · 等待新数据");
         bool changed=false;
         for(const auto& item:{std::pair<int,std::wstring>{206,summary},{211,quota::Remaining(five)},{212,quota::Remaining(week)}}){
             HWND label=GetDlgItem(settingsWindow,item.first);if(quota_ui::caption(label)!=item.second){SetWindowTextW(label,item.second.c_str());changed=true;}
@@ -527,30 +529,40 @@ void CloudLoop(){
 void PaintSettings(HWND h,HDC target){
     using namespace quota_ui;RECT r{};GetClientRect(h,&r);if(r.right<=0||r.bottom<=0)return;
     HDC dc=CreateCompatibleDC(target);HBITMAP bitmap=CreateCompatibleBitmap(target,r.right,r.bottom);auto old=SelectObject(dc,bitmap);FillRect(dc,&r,theme.background);
-    text(dc,L"Codex 配额",theme.rect(24,20,360,32),theme.title,Text);
-    text(dc,L"刷新与显示设置",theme.rect(24,55,380,22),theme.smallFont,Muted);
+    text(dc,Ui(L"Codex 配额"),theme.rect(24,20,360,32),theme.title,Text);
+    text(dc,Ui(L"刷新与显示设置"),theme.rect(24,55,380,22),theme.smallFont,Muted);
     auto s=GetData();auto now=quota::NowMs();bool stale=IsStale(s,now);
-    std::wstring badge=s.refreshing?L"正在刷新":!s.queryError.empty()?L"刷新失败":stale?L"等待更新":s.fromServer?L"已同步":L"本地快照";
+    std::wstring badge=s.refreshing?Ui(L"正在刷新"):!s.queryError.empty()?Ui(L"刷新失败"):stale?Ui(L"等待更新"):s.fromServer?Ui(L"已同步"):Ui(L"本地快照");
     COLORREF badgeColor=!s.queryError.empty()?Error:stale?Warning:Accent;
     rounded(dc,theme.rect(480,27,116,27),Panel,Border,12);text(dc,badge,theme.rect(480,27,116,27),theme.smallFont,badgeColor,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
     rounded(dc,theme.rect(24,94,572,142),Panel,Panel,12);
-    text(dc,L"5 小时剩余",theme.rect(44,109,242,22),theme.smallFont,Muted);
-    text(dc,L"本周剩余",theme.rect(330,109,242,22),theme.smallFont,Muted);
+    text(dc,Ui(L"5 小时剩余"),theme.rect(44,109,242,22),theme.smallFont,Muted);
+    text(dc,Ui(L"本周剩余"),theme.rect(330,109,242,22),theme.smallFont,Muted);
     HPEN pen=CreatePen(PS_SOLID,1,Border);auto oldPen=SelectObject(dc,pen);MoveToEx(dc,theme.px(308),theme.px(114),nullptr);LineTo(dc,theme.px(308),theme.px(196));MoveToEx(dc,theme.px(24),theme.px(489),nullptr);LineTo(dc,theme.px(596),theme.px(489));SelectObject(dc,oldPen);DeleteObject(pen);
     auto bar=[&](int x,const quota::Window& raw){auto w=CurrentWindow(raw,now);RECT track=theme.rect(x,190,244,4);rounded(dc,track,Border,Border,4);if(w.present){int width=static_cast<int>(std::clamp(100.0-w.used,0.0,100.0)*244/100.0);if(width>1)rounded(dc,theme.rect(x,190,width,4),stale?Muted:100-w.used<=20?Warning:Accent,stale?Muted:100-w.used<=20?Warning:Accent,4);}};
     bar(44,s.snapshot.fiveHour);bar(330,s.snapshot.weekly);
-    text(dc,L"自动刷新",theme.rect(24,254,400,24),theme.medium,Text);
-    text(dc,L"按设定间隔获取账户最新额度",theme.rect(24,324,530,20),theme.smallFont,Muted);
-    text(dc,L"刷新间隔",theme.rect(24,343,274,22),theme.body,Text);
-    text(dc,L"旧数据提示",theme.rect(322,343,274,22),theme.body,Text);
+    text(dc,Ui(L"自动刷新"),theme.rect(24,254,400,24),theme.medium,Text);
+    text(dc,Ui(L"按设定间隔获取账户最新额度"),theme.rect(24,324,530,20),theme.smallFont,Muted);
+    text(dc,Ui(L"刷新间隔"),theme.rect(24,343,274,22),theme.body,Text);
+    text(dc,Ui(L"旧数据提示"),theme.rect(322,343,274,22),theme.body,Text);
     rounded(dc,theme.rect(24,370,274,36),Field,GetFocus()==GetDlgItem(h,202)?Accent:Border);
     rounded(dc,theme.rect(322,370,274,36),Field,GetFocus()==GetDlgItem(h,205)?Accent:Border);
-    text(dc,L"秒",theme.rect(248,371,36,34),theme.smallFont,Muted,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-    text(dc,L"分钟",theme.rect(540,371,42,34),theme.smallFont,Muted,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
-    text(dc,L"30–3600 秒",theme.rect(24,411,274,20),theme.smallFont,Muted);
-    text(dc,L"1–120 分钟",theme.rect(322,411,274,20),theme.smallFont,Muted);
-    text(dc,L"显示方式",theme.rect(24,508,142,26),theme.body,Text);
+    text(dc,Ui(L"秒"),theme.rect(248,371,36,34),theme.smallFont,Muted,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    text(dc,Ui(L"分钟"),theme.rect(540,371,42,34),theme.smallFont,Muted,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    text(dc,Ui(L"30–3600 秒"),theme.rect(24,411,274,20),theme.smallFont,Muted);
+    text(dc,Ui(L"1–120 分钟"),theme.rect(322,411,274,20),theme.smallFont,Muted);
+    text(dc,Ui(L"显示方式"),theme.rect(24,508,142,26),theme.body,Text);
+    text(dc,Ui(L"界面语言"),theme.rect(24,552,142,26),theme.body,Text);
     BitBlt(target,0,0,r.right,r.bottom,dc,0,0,SRCCOPY);SelectObject(dc,old);DeleteObject(bitmap);DeleteDC(dc);
+}
+// 只改固定文案和下拉选项，保留刷新间隔等尚未保存的输入。
+void TranslateSettings(HWND h){
+    SetWindowTextW(h,Ui(L"Codex 配额 — 配置"));
+    for(const auto& item:{std::pair<int,const wchar_t*>{201,L"自动查询账户额度"},{203,L"仅在 Codex 运行时查询"},{301,L"立即刷新"},{302,L"保存并应用"},{303,L"关闭"}})SetWindowTextW(GetDlgItem(h,item.first),Ui(item.second));
+    HWND combo=GetDlgItem(h,204);LRESULT selected=SendMessageW(combo,CB_GETCURSEL,0,0);SendMessageW(combo,CB_RESETCONTENT,0,0);
+    for(auto text:{L"仅任务栏数字",L"任务栏 + Codex 顶部",L"任务栏 + Codex 左侧"})SendMessageW(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(Ui(text)));
+    SendMessageW(combo,CB_SETCURSEL,selected,0);InvalidateRect(h,nullptr,FALSE);
+    paintedText.clear();if(window)InvalidateRect(window,nullptr,FALSE);
 }
 LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
     switch(message){
@@ -558,21 +570,24 @@ LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
         quota_ui::theme.create(GetDpiForWindow(h));
         auto control=[&](const wchar_t* cls,const wchar_t* title,DWORD style,int id){HWND child=CreateWindowExW(0,cls,title,WS_CHILD|WS_VISIBLE|style,0,0,100,40,h,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);quota_ui::styleControl(child);return child;};
         auto config=GetPreferences();
-        control(L"BUTTON",L"自动查询账户额度",BS_AUTOCHECKBOX|WS_TABSTOP,201);
+        control(L"BUTTON",Ui(L"自动查询账户额度"),BS_AUTOCHECKBOX|WS_TABSTOP,201);
         control(L"EDIT",std::to_wstring(config.intervalSeconds).c_str(),ES_NUMBER|WS_TABSTOP,202);
         control(L"EDIT",std::to_wstring(config.staleMinutes).c_str(),ES_NUMBER|WS_TABSTOP,205);
-        control(L"BUTTON",L"仅在 Codex 运行时查询",BS_AUTOCHECKBOX|WS_TABSTOP,203);
+        control(L"BUTTON",Ui(L"仅在 Codex 运行时查询"),BS_AUTOCHECKBOX|WS_TABSTOP,203);
         HWND combo=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS|WS_TABSTOP,204);
-        for(auto text:{L"仅任务栏数字",L"任务栏 + Codex 顶部",L"任务栏 + Codex 左侧"})SendMessageW(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(text));
+        for(auto text:{Ui(L"仅任务栏数字"),Ui(L"任务栏 + Codex 顶部"),Ui(L"任务栏 + Codex 左侧")})SendMessageW(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(text));
         SendMessageW(combo,CB_SETCURSEL,config.showInCodex?(config.leftSide?2:1):0,0);
+        HWND language=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS|WS_TABSTOP,208);
+        for(auto text:{L"中文",L"English"})SendMessageW(language,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(text));
+        SendMessageW(language,CB_SETCURSEL,config.english?1:0,0);
         SendMessageW(GetDlgItem(h,201),BM_SETCHECK,config.online?BST_CHECKED:BST_UNCHECKED,0);
         SendMessageW(GetDlgItem(h,203),BM_SETCHECK,config.onlyWithCodex?BST_CHECKED:BST_UNCHECKED,0);
-        control(L"STATIC",L"等待账户数据…",SS_LEFT|SS_NOPREFIX,206);
+        control(L"STATIC",Ui(L"等待账户数据…"),SS_LEFT|SS_NOPREFIX,206);
         control(L"STATIC",L"-",SS_LEFT|SS_NOPREFIX,211);control(L"STATIC",L"-",SS_LEFT|SS_NOPREFIX,212);
-        control(L"STATIC",L"设置将在保存后生效",SS_LEFT|SS_NOPREFIX,207);
-        control(L"BUTTON",L"立即刷新",BS_OWNERDRAW|WS_TABSTOP,301);
-        control(L"BUTTON",L"保存并应用",BS_OWNERDRAW|WS_TABSTOP,302);
-        control(L"BUTTON",L"关闭",BS_OWNERDRAW|WS_TABSTOP,303);
+        control(L"STATIC",Ui(L"设置将在保存后生效"),SS_LEFT|SS_NOPREFIX,207);
+        control(L"BUTTON",Ui(L"立即刷新"),BS_OWNERDRAW|WS_TABSTOP,301);
+        control(L"BUTTON",Ui(L"保存并应用"),BS_OWNERDRAW|WS_TABSTOP,302);
+        control(L"BUTTON",Ui(L"关闭"),BS_OWNERDRAW|WS_TABSTOP,303);
         quota_ui::layout(h);
         return 0;
     }
@@ -580,11 +595,11 @@ LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
     case WM_PRINTCLIENT:PaintSettings(h,reinterpret_cast<HDC>(wp));return 0;
     case WM_ERASEBKGND:return 1;
     case WM_DRAWITEM:if(quota_ui::drawItem(*reinterpret_cast<DRAWITEMSTRUCT*>(lp)))return TRUE;break;
-    case WM_MEASUREITEM:if(reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->CtlID==204){reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->itemHeight=quota_ui::theme.px(32);return TRUE;}break;
+    case WM_MEASUREITEM:if(reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->CtlID==204||reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->CtlID==208){reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->itemHeight=quota_ui::theme.px(32);return TRUE;}break;
     case WM_CTLCOLORSTATIC:{
         using namespace quota_ui;HDC dc=reinterpret_cast<HDC>(wp);int id=GetDlgCtrlID(reinterpret_cast<HWND>(lp));SetBkMode(dc,TRANSPARENT);COLORREF color=Muted;
         if(id==211||id==212){auto s=GetData();auto w=CurrentWindow(id==211?s.snapshot.fiveHour:s.snapshot.weekly,quota::NowMs());color=!w.present||IsStale(s,quota::NowMs())?Muted:100-w.used<=20?Warning:Text;}
-        if(id==207){auto messageText=caption(reinterpret_cast<HWND>(lp));color=messageText.find(L"须")!=std::wstring::npos||messageText.find(L"无法")!=std::wstring::npos?Error:messageText.find(L"已保存")!=std::wstring::npos?Accent:Muted;}
+        if(id==207){auto messageText=caption(reinterpret_cast<HWND>(lp));color=messageText.find(L"须")!=std::wstring::npos||messageText.find(L"无法")!=std::wstring::npos||messageText.find(L"Use ")==0||messageText.find(L"Cannot")==0?Error:messageText.find(L"已保存")!=std::wstring::npos||messageText.find(L"Saved")==0?Accent:Muted;}
         bool onPanel=id==206||id==211||id==212;SetTextColor(dc,color);SetBkColor(dc,onPanel?Panel:Background);return reinterpret_cast<LRESULT>(onPanel?theme.panel:theme.background);
     }
     case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:SetTextColor(reinterpret_cast<HDC>(wp),quota_ui::Text);SetBkColor(reinterpret_cast<HDC>(wp),quota_ui::Field);return reinterpret_cast<LRESULT>(quota_ui::theme.field);
@@ -600,14 +615,15 @@ LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
         if(LOWORD(wp)==302){
             auto config=GetPreferences();BOOL a=FALSE,b=FALSE;
             config.intervalSeconds=static_cast<int>(GetDlgItemInt(h,202,&a,FALSE));config.staleMinutes=static_cast<int>(GetDlgItemInt(h,205,&b,FALSE));
-            if(!a||!b||!quota::ValidSettings(config)){SetWindowTextW(GetDlgItem(h,207),L"查询间隔须为 30–3600 秒；旧数据提示须为 1–120 分钟。");return 0;}
+            if(!a||!b||!quota::ValidSettings(config)){SetWindowTextW(GetDlgItem(h,207),Ui(L"查询间隔须为 30–3600 秒；旧数据提示须为 1–120 分钟。"));return 0;}
             config.online=SendMessageW(GetDlgItem(h,201),BM_GETCHECK,0,0)==BST_CHECKED;
             config.onlyWithCodex=SendMessageW(GetDlgItem(h,203),BM_GETCHECK,0,0)==BST_CHECKED;
             LRESULT selected=SendMessageW(GetDlgItem(h,204),CB_GETCURSEL,0,0);config.showInCodex=selected>0;config.leftSide=selected==2;
-            if(!quota::SaveSettings(settingsPath,config)){SetWindowTextW(GetDlgItem(h,207),L"无法保存本机配置，请检查文件权限。");return 0;}
+            config.english=SendMessageW(GetDlgItem(h,208),CB_GETCURSEL,0,0)==1;
+            if(!quota::SaveSettings(settingsPath,config)){SetWindowTextW(GetDlgItem(h,207),Ui(L"无法保存本机配置，请检查文件权限。"));return 0;}
             {std::lock_guard<std::mutex> lock(preferencesMutex);preferences=config;}showInCodex=config.showInCodex;leftSide=config.leftSide;
             if(!config.online){std::lock_guard<std::mutex> lock(dataMutex);if(data.localSnapshot.observed){data.snapshot=data.localSnapshot;data.fromServer=false;}}
-            lastVisible=false;PositionStrip();UpdateState();RequestCloud();SetWindowTextW(GetDlgItem(h,207),L"已保存并应用。");return 0;
+            TranslateSettings(h);lastVisible=false;PositionStrip();UpdateState();RequestCloud();SetWindowTextW(GetDlgItem(h,207),Ui(L"已保存并应用。"));return 0;
         }
         break;
     case WM_CLOSE:DestroyWindow(h);return 0;
@@ -619,8 +635,8 @@ void OpenSettings(){
     if(headless)return;if(settingsWindow){ShowWindow(settingsWindow,SW_RESTORE);SetForegroundWindow(settingsWindow);return;}
     std::wstring name=L"QuotaSettings_"+windowClass;
     WNDCLASSEXW cls{sizeof(cls)};cls.hInstance=instance;cls.lpfnWndProc=SettingsProcedure;cls.lpszClassName=name.c_str();cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassExW(&cls);
-    UINT d=GetDpiForSystem();RECT bounds{0,0,MulDiv(620,d,96),MulDiv(640,d,96)};AdjustWindowRectExForDpi(&bounds,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,FALSE,0,d);
-    settingsWindow=CreateWindowExW(0,name.c_str(),L"Codex 配额 — 配置",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,bounds.right-bounds.left,bounds.bottom-bounds.top,nullptr,nullptr,instance,nullptr);
+    UINT d=GetDpiForSystem();RECT bounds{0,0,MulDiv(620,d,96),MulDiv(680,d,96)};AdjustWindowRectExForDpi(&bounds,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,FALSE,0,d);
+    settingsWindow=CreateWindowExW(0,name.c_str(),Ui(L"Codex 配额 — 配置"),WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,bounds.right-bounds.left,bounds.bottom-bounds.top,nullptr,nullptr,instance,nullptr);
     if(settingsWindow){
         BOOL dark=TRUE;DwmSetWindowAttribute(settingsWindow,DWMWA_USE_IMMERSIVE_DARK_MODE,&dark,sizeof(dark));
         // 隐藏启动会覆盖第一次 ShowWindow；用户明确打开配置时强制显示该窗口。
@@ -648,15 +664,15 @@ void Command(UINT choice) {
 }
 void Menu() {
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING | (showInCodex && !leftSide ? MF_CHECKED : 0), 1, L"Codex 内显示在顶部");
-    AppendMenuW(menu, MF_STRING | (showInCodex && leftSide ? MF_CHECKED : 0), 2, L"Codex 内显示在左侧");
+    AppendMenuW(menu, MF_STRING | (showInCodex && !leftSide ? MF_CHECKED : 0), 1, Ui(L"Codex 内显示在顶部"));
+    AppendMenuW(menu, MF_STRING | (showInCodex && leftSide ? MF_CHECKED : 0), 2, Ui(L"Codex 内显示在左侧"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | (!showInCodex ? MF_CHECKED : 0), 5, L"仅任务栏数字");
-    AppendMenuW(menu, MF_STRING | (showInCodex ? MF_CHECKED : 0), 6, L"任务栏 + Codex 内显示");
+    AppendMenuW(menu, MF_STRING | (!showInCodex ? MF_CHECKED : 0), 5, Ui(L"仅任务栏数字"));
+    AppendMenuW(menu, MF_STRING | (showInCodex ? MF_CHECKED : 0), 6, Ui(L"任务栏 + Codex 内显示"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, 7, L"配置…");
-    AppendMenuW(menu, MF_STRING, 3, L"立即刷新账户 / 本机数据");
-    AppendMenuW(menu, MF_STRING, 4, L"退出配额条");
+    AppendMenuW(menu, MF_STRING, 7, Ui(L"配置…"));
+    AppendMenuW(menu, MF_STRING, 3, Ui(L"立即刷新账户 / 本机数据"));
+    AppendMenuW(menu, MF_STRING, 4, Ui(L"退出配额条"));
     HWND returnFocus = GetForegroundWindow();
     POINT point{}; GetCursorPos(&point); SetForegroundWindow(controller);
     UINT choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, point.x, point.y, 0, controller, nullptr);
@@ -740,7 +756,7 @@ int WINAPI wWinMain(HINSTANCE app, HINSTANCE, PWSTR, int) {
     WNDCLASSEXW cls{sizeof(cls)}; cls.hInstance = instance; cls.lpfnWndProc = Procedure; cls.lpszClassName = windowClass.c_str(); cls.style = CS_DBLCLKS; cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     if (!RegisterClassExW(&cls)) return 1;
     cls.lpszClassName=controllerClass.c_str();if(!RegisterClassExW(&cls))return 1;
-    controller=CreateWindowExW(WS_EX_TOOLWINDOW,controllerClass.c_str(),L"Codex 配额控制器 2.0",WS_POPUP,0,0,0,0,nullptr,nullptr,instance,nullptr);
+    controller=CreateWindowExW(WS_EX_TOOLWINDOW,controllerClass.c_str(),Ui(L"Codex 配额控制器 2.0"),WS_POPUP,0,0,0,0,nullptr,nullptr,instance,nullptr);
     if(!controller)return 1;
     UpdateFonts(96);
     if (!headless) {

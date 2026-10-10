@@ -6,7 +6,7 @@
 
 ## 下载与平台
 
-[下载原生预览版](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.1)
+[下载原生预览版](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.2)
 
 | 产物 | 适用环境 |
 | --- | --- |
@@ -67,7 +67,7 @@ Codex CLI 的安装和登录方式见 [官方说明](https://learn.chatgpt.com/d
 
 ## 配置与命令
 
-界面当前为英文；Windows 版保留中文界面。默认查询间隔 120 秒，范围 30–3600 秒；旧数据阈值默认 5 分钟，范围 1–120 分钟。
+三平台支持中文／英文界面切换。原生版默认英文，在设置中将 `Language` 改为 `中文` 或 `English`，点击保存并应用后立即切换，重启后保留；`settings.ini` 使用 `language=zh-CN` 或 `language=en`。默认查询间隔 120 秒，范围 30–3600 秒；旧数据阈值默认 5 分钟，范围 1–120 分钟。
 
 | 设置 | 含义 |
 | --- | --- |
@@ -75,6 +75,7 @@ Codex CLI 的安装和登录方式见 [官方说明](https://learn.chatgpt.com/d
 | `Query only while the host … is open` | 检测到宿主桌面应用时定时查询；仅 CLI 环境可取消勾选，手动刷新可跳过宿主条件 |
 | `Show window-following overlay` | 显示前台宿主窗口的配额条；macOS 要求辅助功能权限，Linux 要求 X11 |
 | `Overlay position` | Top／Left |
+| `Language` | 中文／English，保存后立即生效 |
 | `Codex data directory` | 已登录账号的绝对数据目录 |
 | `Codex executable` | 留空自动发现，或指定本机 Codex 的完整路径 |
 | `Host … contains` | 宿主应用名／bundle ID（macOS）或窗口类（Linux）的匹配字符串 |

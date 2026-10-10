@@ -1,4 +1,5 @@
 #include "NativeCore.h"
+#include "Localization.h"
 #include <gtk/gtk.h>
 #include <gdk/gdkx.h>
 #include <glib-unix.h>
@@ -22,6 +23,7 @@ struct App {
     Engine engine;
     GtkWidget *strip = nullptr, *stripText = nullptr, *config = nullptr, *status = nullptr;
     GtkWidget *seconds = nullptr, *stale = nullptr, *online = nullptr, *only = nullptr, *show = nullptr, *side = nullptr, *home = nullptr, *binary = nullptr, *hostName = nullptr;
+    GtkWidget* language = nullptr;
     AppIndicator* indicators[2]{};
     std::filesystem::path configRoot, cache;
     Display* display = nullptr;
@@ -51,10 +53,11 @@ struct App {
     static void Quit(GtkMenuItem*, gpointer data) { static_cast<App*>(data)->closing = true; gtk_main_quit(); }
     static gboolean Update(gpointer data) { auto& app = *static_cast<App*>(data); if (!app.closing) app.paint(); return G_SOURCE_REMOVE; }
     static gboolean StaleTick(gpointer data) { auto& app = *static_cast<App*>(data); if (!app.closing) app.paint(); return !app.closing; }
+    const char* ui(const char* english) { return Translate(english, engine.preferences().chinese); }
     GtkWidget* menu() {
         auto menu = gtk_menu_new();
         for (auto item : {std::pair<const char*, GCallback>{"Refresh now", G_CALLBACK(Refresh)}, {"Settings…", G_CALLBACK(Settings)}, {"Quit", G_CALLBACK(Quit)}}) {
-            auto entry = gtk_menu_item_new_with_label(item.first); g_signal_connect(entry, "activate", item.second, this); gtk_menu_shell_append(GTK_MENU_SHELL(menu), entry);
+            auto entry = gtk_menu_item_new_with_label(ui(item.first)); g_signal_connect(entry, "activate", item.second, this); gtk_menu_shell_append(GTK_MENU_SHELL(menu), entry);
         }
         gtk_widget_show_all(menu); return menu;
     }
@@ -72,7 +75,7 @@ struct App {
         for (int i = 0; i < 2; ++i) {
             std::string id = "codex-quota-" + std::to_string(getpid()) + "-" + std::to_string(i);
             indicators[i] = app_indicator_new(id.c_str(), "utilities-system-monitor", APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
-            app_indicator_set_title(indicators[i], i == 0 ? "Codex five-hour remaining quota" : "Codex weekly remaining quota");
+            app_indicator_set_title(indicators[i], i == 0 ? ui("Codex five-hour remaining quota") : ui("Codex weekly remaining quota"));
             app_indicator_set_menu(indicators[i], GTK_MENU(menu())); app_indicator_set_status(indicators[i], APP_INDICATOR_STATUS_ACTIVE);
         }
         // Wayland 不提供通用的其他应用窗口坐标，避免把 XWayland 误报为完整支持。
@@ -168,8 +171,8 @@ struct App {
         gtk_label_set_text(GTK_LABEL(stripText), text.c_str());
         if (changed) position();
         if (status) {
-            std::string message = summary + "\n" + (state.refreshing ? "Refreshing…" : !state.error.empty() ? state.error : !prefs.online ? "Online queries disabled" : "Account quota");
-            if (!x11) message += "\nWayland: overlay/host detection unavailable. Scheduling uses the interval.";
+            std::string message = summary + "\n" + (state.refreshing ? ui("Refreshing…") : !state.error.empty() ? ui(state.error.c_str()) : !prefs.online ? ui("Online queries disabled") : ui("Account quota"));
+            if (!x11) message += ui("\nWayland: overlay/host detection unavailable. Scheduling uses the interval.");
             gtk_label_set_text(GTK_LABEL(status), message.c_str());
         }
     }
@@ -178,30 +181,38 @@ struct App {
         prefs.seconds = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app.seconds)); prefs.staleMinutes = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app.stale));
         prefs.online = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.online)); prefs.onlyWithCodex = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.only)); prefs.overlay = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.show));
         prefs.left = gtk_combo_box_get_active(GTK_COMBO_BOX(app.side)) == 1;
+        bool changedLanguage = prefs.chinese != (gtk_combo_box_get_active(GTK_COMBO_BOX(app.language)) == 0);
+        prefs.chinese = gtk_combo_box_get_active(GTK_COMBO_BOX(app.language)) == 0;
         prefs.home = gtk_entry_get_text(GTK_ENTRY(app.home)); prefs.binary = gtk_entry_get_text(GTK_ENTRY(app.binary)); prefs.host = gtk_entry_get_text(GTK_ENTRY(app.hostName));
-        if (!Save(app.configRoot / "settings.ini", prefs)) { gtk_label_set_text(GTK_LABEL(app.status), "Cannot save: check absolute home path, values and permissions"); return; }
+        if (!Save(app.configRoot / "settings.ini", prefs)) { gtk_label_set_text(GTK_LABEL(app.status), app.ui("Cannot save: check absolute home path, values and permissions")); return; }
         app.engine.configure(prefs); app.lastSummary.clear(); app.paint(); app.position();
+        if(changedLanguage){
+            // 保存成功后重建固定标签，不丢失当前刷新和显示设置。
+            for(auto indicator:app.indicators)app_indicator_set_menu(indicator,GTK_MENU(app.menu()));
+            gtk_widget_destroy(app.config);app.openSettings();
+        }
     }
     void openSettings() {
         if (config) { gtk_window_present(GTK_WINDOW(config)); return; }
-        auto prefs = engine.preferences(); config = gtk_window_new(GTK_WINDOW_TOPLEVEL); gtk_window_set_title(GTK_WINDOW(config), "Codex Quota — Settings"); gtk_window_set_default_size(GTK_WINDOW(config), 520, 470);
+        auto prefs = engine.preferences(); config = gtk_window_new(GTK_WINDOW_TOPLEVEL); gtk_window_set_title(GTK_WINDOW(config), ui("Codex Quota — Settings")); gtk_window_set_default_size(GTK_WINDOW(config), 520, 470);
         g_signal_connect(config, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer data) { auto& app = *static_cast<App*>(data); app.config = nullptr; app.status = nullptr; }), this);
         auto box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14); gtk_container_set_border_width(GTK_CONTAINER(box), 24); gtk_container_add(GTK_CONTAINER(config), box);
         status = gtk_label_new(""); gtk_label_set_xalign(GTK_LABEL(status), 0); gtk_label_set_line_wrap(GTK_LABEL(status), TRUE); gtk_box_pack_start(GTK_BOX(box), status, FALSE, FALSE, 0);
         auto grid = gtk_grid_new(); gtk_grid_set_row_spacing(GTK_GRID(grid), 12); gtk_grid_set_column_spacing(GTK_GRID(grid), 18); gtk_box_pack_start(GTK_BOX(box), grid, TRUE, TRUE, 0);
         int row = 0;
-        auto field = [&](const char* label, GtkWidget* control) { auto title = gtk_label_new(label); gtk_label_set_xalign(GTK_LABEL(title), 0); gtk_grid_attach(GTK_GRID(grid), title, 0, row, 1, 1); gtk_widget_set_hexpand(control, TRUE); gtk_grid_attach(GTK_GRID(grid), control, 1, row++, 1, 1); return control; };
-        auto check = [&](const char* label, bool enabled) { auto control = gtk_check_button_new_with_label(label); gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(control), enabled); gtk_grid_attach(GTK_GRID(grid), control, 0, row++, 2, 1); return control; };
+        auto field = [&](const char* label, GtkWidget* control) { auto title = gtk_label_new(ui(label)); gtk_label_set_xalign(GTK_LABEL(title), 0); gtk_grid_attach(GTK_GRID(grid), title, 0, row, 1, 1); gtk_widget_set_hexpand(control, TRUE); gtk_grid_attach(GTK_GRID(grid), control, 1, row++, 1, 1); return control; };
+        auto check = [&](const char* label, bool enabled) { auto control = gtk_check_button_new_with_label(ui(label)); gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(control), enabled); gtk_grid_attach(GTK_GRID(grid), control, 0, row++, 2, 1); return control; };
         online = check("Query Codex account online", prefs.online); only = check("Query only while the host app is open", prefs.onlyWithCodex); show = check("Show window-following overlay (X11)", prefs.overlay);
         gtk_widget_set_sensitive(only, x11); gtk_widget_set_sensitive(show, x11);
         seconds = field("Refresh interval (30–3600 s)", gtk_spin_button_new_with_range(30, 3600, 1)); gtk_spin_button_set_value(GTK_SPIN_BUTTON(seconds), prefs.seconds);
         stale = field("Stale after (1–120 min)", gtk_spin_button_new_with_range(1, 120, 1)); gtk_spin_button_set_value(GTK_SPIN_BUTTON(stale), prefs.staleMinutes);
-        side = field("Overlay position", gtk_combo_box_text_new()); gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(side), "Top"); gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(side), "Left"); gtk_combo_box_set_active(GTK_COMBO_BOX(side), prefs.left ? 1 : 0);
+        side = field("Overlay position", gtk_combo_box_text_new()); gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(side), ui("Top")); gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(side), ui("Left")); gtk_combo_box_set_active(GTK_COMBO_BOX(side), prefs.left ? 1 : 0);
         home = field("Codex data directory", gtk_entry_new()); gtk_entry_set_text(GTK_ENTRY(home), prefs.home.c_str());
         binary = field("Codex executable (blank = auto)", gtk_entry_new()); gtk_entry_set_text(GTK_ENTRY(binary), prefs.binary.c_str());
         hostName = field("Host window class contains", gtk_entry_new()); gtk_entry_set_text(GTK_ENTRY(hostName), prefs.host.c_str());
+        language=field("Language",gtk_combo_box_text_new());gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language),"中文");gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language),"English");gtk_combo_box_set_active(GTK_COMBO_BOX(language),prefs.chinese?0:1);
         auto buttons = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL); gtk_button_box_set_layout(GTK_BUTTON_BOX(buttons), GTK_BUTTONBOX_END); gtk_box_pack_end(GTK_BOX(box), buttons, FALSE, FALSE, 0);
-        auto refresh = gtk_button_new_with_label("Refresh now"), apply = gtk_button_new_with_label("Save and apply"); gtk_container_add(GTK_CONTAINER(buttons), refresh); gtk_container_add(GTK_CONTAINER(buttons), apply);
+        auto refresh = gtk_button_new_with_label(ui("Refresh now")), apply = gtk_button_new_with_label(ui("Save and apply")); gtk_container_add(GTK_CONTAINER(buttons), refresh); gtk_container_add(GTK_CONTAINER(buttons), apply);
         g_signal_connect(refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) { static_cast<App*>(data)->engine.refresh(); }), this); g_signal_connect(apply, "clicked", G_CALLBACK(Apply), this);
         paint(); gtk_widget_show_all(config);
     }
@@ -218,8 +229,8 @@ struct App {
             case 0: if (!gtk_widget_get_visible(app.strip)) return fail("Foreground host must show overlay"); XMoveWindow(app.display, app.testHost, 200, 120); XFlush(app.display); break;
             case 1: { int x, y; gtk_window_get_position(GTK_WINDOW(app.strip), &x, &y); if (x != 476 || y != 126) return fail("Moving host must reposition overlay"); app.activate(app.testOther); break; }
             case 2: if (gtk_widget_get_visible(app.strip)) return fail("Other foreground application must hide overlay"); app.activate(app.testHost); break;
-            case 3: if (!gtk_widget_get_visible(app.strip)) return fail("Returning to host must restore overlay"); app.openSettings(); gtk_spin_button_set_value(GTK_SPIN_BUTTON(app.seconds), 45); Apply(nullptr, &app); break;
-            case 4: if (app.engine.preferences().seconds != 45 || Load(app.configRoot / "settings.ini").seconds != 45) return fail("Native settings must apply and persist"); XDestroyWindow(app.display, app.testHost); app.activate(0); break;
+            case 3: if (!gtk_widget_get_visible(app.strip)) return fail("Returning to host must restore overlay"); app.openSettings(); gtk_spin_button_set_value(GTK_SPIN_BUTTON(app.seconds), 45); gtk_combo_box_set_active(GTK_COMBO_BOX(app.language),0); Apply(nullptr, &app); break;
+            case 4: if (app.engine.preferences().seconds != 45 || Load(app.configRoot / "settings.ini").seconds != 45 || !Load(app.configRoot / "settings.ini").chinese || std::string(gtk_window_get_title(GTK_WINDOW(app.config)))!="Codex 配额 — 设置") return fail("Native settings and Chinese UI must apply and persist"); gtk_combo_box_set_active(GTK_COMBO_BOX(app.language),1);Apply(nullptr,&app);if(std::string(gtk_window_get_title(GTK_WINDOW(app.config)))!="Codex Quota — Settings")return fail("English UI must restore live");XDestroyWindow(app.display, app.testHost); app.activate(0); break;
             case 5: {
                 if (gtk_widget_get_visible(app.strip)) return fail("Closed host must hide overlay");
                 app.testPassed = true; std::cout << "PASS: Linux tray/settings, X11 focus hiding, move-following, restore and host exit\n";

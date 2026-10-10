@@ -12,7 +12,7 @@ namespace nativequota {
 class AuthWatcher;
 struct Preferences {
     int seconds = 120, staleMinutes = 5;
-    bool online = true, onlyWithCodex = true, overlay = true, left = false;
+    bool online = true, onlyWithCodex = true, overlay = true, left = false, chinese = false;
     std::string home, binary, host = "Codex";
 };
 struct State {

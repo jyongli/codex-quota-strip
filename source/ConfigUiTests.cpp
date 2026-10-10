@@ -32,6 +32,14 @@ int wmain(int argc,wchar_t** argv){
         SendMessageW(GetDlgItem(t.settings,204),CB_SETCURSEL,1,0);SendMessageW(GetDlgItem(t.settings,203),BM_SETCHECK,BST_UNCHECKED,0);SendMessageW(t.settings,WM_COMMAND,302,0);
         check(wait([&]{auto s=state(root/L"status.json");return s.get("refresh_seconds").num==45&&s.get("stale_minutes").num==2&&s.get("show_in_codex").num==1;}),"Apply must immediately change interval, stale threshold and display mode");
         check(GetPrivateProfileIntW(L"refresh",L"seconds",0,(root/L"CodexQuotaStrip"/L"settings.ini").c_str())==45,"Settings must persist for restart");
+        HWND language=GetDlgItem(t.settings,208);check(language!=nullptr,"Settings must provide a Chinese/English language selector");
+        SendMessageW(language,CB_SETCURSEL,1,0);SendMessageW(t.settings,WM_COMMAND,302,0);
+        wchar_t caption[180]{};GetWindowTextW(GetDlgItem(t.settings,302),caption,180);
+        check(std::wstring(caption)==L"Save and apply","Applying English must translate the live configuration window");
+        GetPrivateProfileStringW(L"display",L"language",L"",caption,180,(root/L"CodexQuotaStrip"/L"settings.ini").c_str());
+        check(std::wstring(caption)==L"en","Language choice must persist for restart");
+        SendMessageW(language,CB_SETCURSEL,0,0);SendMessageW(t.settings,WM_COMMAND,302,0);
+        GetWindowTextW(GetDlgItem(t.settings,302),caption,180);check(std::wstring(caption)==L"保存并应用","Switching back must restore Chinese without restarting");
         SendMessageW(GetDlgItem(t.settings,202),WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"0"));SendMessageW(t.settings,WM_COMMAND,302,0);Sleep(50);check(state(root/L"status.json").get("refresh_seconds").num==45,"Invalid intervals must leave the active configuration unchanged");
         SendMessageW(t.settings,WM_COMMAND,303,0);check(!IsWindow(t.settings),"Close button must release the configuration window");check(WaitForSingleObject(process.hProcess,0)==WAIT_TIMEOUT,"Closing settings must preserve the quota process");
         std::cout<<"PASS: native configuration apply, persistence, validation and close lifecycle\n";
