@@ -68,7 +68,7 @@ jobs:
             # 检查打包后的 .app，确认资源复制没有破坏签名且包含两个架构。
             unzip -q CodexQuotaStrip-macos-universal.zip -d package-check
             codesign --verify --deep --strict package-check/CodexQuotaStrip-macos-universal/CodexQuotaStrip.app
-            lipo -verify_arch arm64 x86_64 package-check/CodexQuotaStrip-macos-universal/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip
+            lipo package-check/CodexQuotaStrip-macos-universal/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip -verify_arch arm64 x86_64
           fi
           cp ../../LICENSE artifact/
           cp ui-smoke.txt artifact/
