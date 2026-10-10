@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <cwchar>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -105,7 +106,12 @@ inline long long Timestamp(const std::string& iso) {
     if (std::sscanf(iso.c_str(), "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &sec) != 6 || iso.empty() || iso.back() != 'Z') return 0;
     if (y < 2000 || y > 2200 || mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59 || sec < 0 || sec > 60) return 0;
     std::tm t{}; t.tm_year = y - 1900; t.tm_mon = mo - 1; t.tm_mday = d; t.tm_hour = h; t.tm_min = mi; t.tm_sec = sec;
+    // 两个平台分支都按 UTC 换算，避免使用受本机时区影响的 mktime。
+#ifdef _WIN32
     long long ms = _mkgmtime64(&t) * 1000;
+#else
+    long long ms = static_cast<long long>(timegm(&t)) * 1000;
+#endif
     auto dot = iso.find('.', 19);
     if (dot != std::string::npos) { int place = 100; for (size_t i = dot + 1; i < iso.size() && place; ++i, place /= 10) { if (iso[i] < '0' || iso[i] > '9') break; ms += (iso[i] - '0') * place; } }
     return ms;

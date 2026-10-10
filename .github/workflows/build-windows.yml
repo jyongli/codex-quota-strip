@@ -24,6 +24,9 @@ jobs:
           mkdir -p build
           c++ -std=c++17 -O2 native/CoreTests.cpp -o build/core-tests
           ./build/core-tests
+          c++ -std=c++17 -O2 native/FakeServer.cpp -o build/fake-server
+          c++ -std=c++17 -O2 -pthread native/QueryTests.cpp native/QueryStub.cpp -o build/query-tests
+          ./build/query-tests ./build/fake-server
   build:
     runs-on: windows-2022
     timeout-minutes: 15
