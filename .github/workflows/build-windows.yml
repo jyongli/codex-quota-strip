@@ -39,9 +39,20 @@ jobs:
         env:
           XDG_SESSION_TYPE: x11
         run: xvfb-run -a dbus-run-session -- ./build/native/CodexQuotaStrip --smoke-test
+      - name: Verify Wayland capability policy
+        if: runner.os == 'Linux'
+        env:
+          XDG_SESSION_TYPE: wayland
+        run: xvfb-run -a dbus-run-session -- ./build/native/CodexQuotaStrip --smoke-wayland
+      - name: Verify Linux single instance across account homes
+        if: runner.os == 'Linux'
+        run: xvfb-run -a dbus-run-session -- bash native/SingleInstanceTest.sh ./build/native/CodexQuotaStrip
       - name: Verify macOS menu bar and native UI
         if: runner.os == 'macOS'
         run: ./build/native/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip --smoke-test
+      - name: Verify macOS single instance across account homes
+        if: runner.os == 'macOS'
+        run: bash native/SingleInstanceTest.sh ./build/native/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip
       - name: Package native artifacts
         run: |
           cd build/native

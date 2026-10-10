@@ -95,7 +95,12 @@ struct App {
         g_unix_signal_add(SIGINT, [](gpointer data) -> gboolean { auto& app = *static_cast<App*>(data); app.closing = true; gtk_main_quit(); return G_SOURCE_REMOVE; }, this);
         g_timeout_add_seconds(30, StaleTick, this);
         if (options.settings) openSettings();
-        if (options.smoke) startSmoke();
+        if (options.smokeWayland) {
+            openSettings();
+            testPassed = !x11 && !engine.preferences().onlyWithCodex && !gtk_widget_get_sensitive(only) && !gtk_widget_get_sensitive(show);
+            std::cout << (testPassed ? "PASS: Wayland tray mode does not pause queries behind unavailable host detection\n" : "FAIL: Wayland query gate remains enabled\n");
+            g_timeout_add(100, [](gpointer data) -> gboolean { auto& app = *static_cast<App*>(data); app.closing = true; gtk_main_quit(); return G_SOURCE_REMOVE; }, this);
+        } else if (options.smoke) startSmoke();
     }
     std::vector<unsigned long> property(::Window window, Atom key, Atom expected) {
         Atom type; int format; unsigned long count = 0, remaining = 0; unsigned char* bytes = nullptr;

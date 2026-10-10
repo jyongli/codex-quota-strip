@@ -72,6 +72,6 @@ public:
     void refresh();
     void stop();
 };
-struct Options { bool settings = false, smoke = false; Preferences preferences; };
+struct Options { bool settings = false, smoke = false, smokeWayland = false; Preferences preferences; };
 Options ParseOptions(int argc, char** argv);
 }

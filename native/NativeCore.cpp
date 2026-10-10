@@ -301,6 +301,7 @@ Options ParseOptions(int argc, char** argv) {
         else if (arg == "--tray-only") next.preferences.overlay = false;
         else if (arg == "--top" || arg == "--left") { next.preferences.overlay = true; next.preferences.left = arg == "--left"; }
         else if (arg == "--smoke-test") { next.smoke = true; next.preferences.online = false; next.preferences.onlyWithCodex = false; }
+        else if (arg == "--smoke-wayland") { next.smoke = true; next.smokeWayland = true; next.preferences.online = false; next.preferences.onlyWithCodex = true; next.preferences.overlay = true; }
         else throw std::runtime_error("Unknown option; use --settings, --home, --codex-binary, --host, --interval, --tray-only, --top or --left");
     }
     if (!Valid(next.preferences)) throw std::runtime_error("Invalid settings or refresh interval");
