@@ -117,12 +117,16 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     CFTypeRef next = nullptr;
     if (AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute, &next) != kAXErrorSuccess || !next || CFGetTypeID(next) != AXUIElementGetTypeID()) { if (next) CFRelease(next); [strip orderOut:nil]; return; }
     if (!focused || !CFEqual(focused, next)) {
-        if (focused) CFRelease(focused); focused = static_cast<AXUIElementRef>(next);
+        if (focused) {
+            for (CFStringRef name : {kAXMovedNotification, kAXResizedNotification, kAXUIElementDestroyedNotification, kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification}) AXObserverRemoveNotification(observer, focused, name);
+            CFRelease(focused);
+        }
+        focused = static_cast<AXUIElementRef>(next);
         for (CFStringRef name : {kAXMovedNotification, kAXResizedNotification, kAXUIElementDestroyedNotification, kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification}) AXObserverAddNotification(observer, focused, name, (__bridge void*)self);
     } else CFRelease(next);
     CFTypeRef point = nullptr, size = nullptr, minimized = nullptr; CGPoint origin{}; CGSize dimensions{};
     bool valid = AXUIElementCopyAttributeValue(focused, kAXPositionAttribute, &point) == kAXErrorSuccess && AXUIElementCopyAttributeValue(focused, kAXSizeAttribute, &size) == kAXErrorSuccess && point && size &&
-        CFGetTypeID(point) == AXValueGetTypeID() && CFGetTypeID(size) == AXValueGetTypeID() && AXValueGetValue(static_cast<AXValueRef>(point), kAXValueCGPointType, &origin) && AXValueGetValue(static_cast<AXValueRef>(size), kAXValueCGSizeType, &dimensions);
+        CFGetTypeID(point) == AXValueGetTypeID() && CFGetTypeID(size) == AXValueGetTypeID() && AXValueGetValue(static_cast<AXValueRef>(point), static_cast<AXValueType>(kAXValueCGPointType), &origin) && AXValueGetValue(static_cast<AXValueRef>(size), static_cast<AXValueType>(kAXValueCGSizeType), &dimensions);
     if (AXUIElementCopyAttributeValue(focused, kAXMinimizedAttribute, &minimized) == kAXErrorSuccess && minimized == kCFBooleanTrue) valid = false;
     if (point) CFRelease(point); if (size) CFRelease(size); if (minimized) CFRelease(minimized);
     if (!valid || dimensions.width < 100 || dimensions.height < 40) { [strip orderOut:nil]; return; }
@@ -200,6 +204,8 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (options.smoke) { std::filesystem::remove(configRoot / "settings.ini"); }
     singleton.reset();
     if (options.smoke) { std::filesystem::remove(configRoot / "instance.lock"); std::filesystem::remove(configRoot); }
+    // NSApplication 正常终止默认使用状态 0；测试失败必须显式传回非零状态。
+    if (options.smoke && !self.smokePassed) std::exit(1);
     return NSTerminateNow;
 }
 @end
