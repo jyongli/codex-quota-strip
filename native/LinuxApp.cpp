@@ -138,7 +138,7 @@ struct App {
         auto extents = property(next, XInternAtom(display, "_NET_FRAME_EXTENTS", False), XA_CARDINAL);
         int left = extents.size() >= 4 ? static_cast<int>(extents[0]) : 0, top = extents.size() >= 4 ? static_cast<int>(extents[2]) : 0;
         double scale = std::max(1, gtk_widget_get_scale_factor(strip));
-        auto placement = Placement({(x - left) / scale, (y - top) / scale, frame.width / scale, (frame.height + top) / scale}, prefs.left);
+        auto placement = Placement({(x - left) / scale, (y - top) / scale, frame.width / scale, (frame.height + top) / scale}, prefs.left, quota::WeeklyOnly(engine.state().snapshot));
         gtk_window_move(GTK_WINDOW(strip), static_cast<int>(placement.x), static_cast<int>(placement.y));
         gtk_window_resize(GTK_WINDOW(strip), static_cast<int>(placement.width), static_cast<int>(placement.height)); gtk_widget_show_all(strip);
         // 配额条不接收鼠标，拖动/点击仍交给下方 Codex 窗口。
@@ -159,11 +159,14 @@ struct App {
     }
     void paint() {
         auto state = engine.state(); auto prefs = engine.preferences(); auto now = NowMs(); auto summary = Summary(state, prefs, now);
-        if (summary != lastSummary) {
+        bool changed = summary != lastSummary;
+        if (changed) {
+            app_indicator_set_status(indicators[0], quota::WeeklyOnly(state.snapshot) ? APP_INDICATOR_STATUS_PASSIVE : APP_INDICATOR_STATUS_ACTIVE);
             ++iconGeneration; icon(0, Remaining(state.snapshot.fiveHour, now), Stale(state, prefs, now)); icon(1, Remaining(state.snapshot.weekly, now), Stale(state, prefs, now)); lastSummary = summary;
         }
-        std::string text = prefs.left ? "5h\n" + Remaining(state.snapshot.fiveHour, now) + "\nW\n" + Remaining(state.snapshot.weekly, now) : summary;
+        std::string text = prefs.left ? (quota::WeeklyOnly(state.snapshot) ? "" : "5h\n" + Remaining(state.snapshot.fiveHour, now) + "\n") + "W\n" + Remaining(state.snapshot.weekly, now) : summary;
         gtk_label_set_text(GTK_LABEL(stripText), text.c_str());
+        if (changed) position();
         if (status) {
             std::string message = summary + "\n" + (state.refreshing ? "Refreshing…" : !state.error.empty() ? state.error : !prefs.online ? "Online queries disabled" : "Account quota");
             if (!x11) message += "\nWayland: overlay/host detection unavailable. Scheduling uses the interval.";

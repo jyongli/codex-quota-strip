@@ -38,7 +38,7 @@ std::string Remaining(quota::Window value, long long now);
 std::string Summary(const State& state, const Preferences& settings, long long now);
 bool Stale(const State& state, const Preferences& settings, long long now);
 bool HostMatches(const std::string& identifier, const std::string& configured);
-Rect Placement(Rect host, bool left);
+Rect Placement(Rect host, bool left, bool weeklyOnly = false);
 
 // 每次查询拥有独立进程组，退出、超时及取消时清理，不复用常驻服务。
 QueryResult Query(const std::string& binary, const std::string& home,

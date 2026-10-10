@@ -315,7 +315,8 @@ void PositionStrip() {
     bool ownerChanged = GetWindow(window, GW_OWNER) != host;
     if (ownerChanged) SetWindowLongPtrW(window, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(host));
     UpdateFonts(GetDpiForWindow(usableHost ? host : window));
-    int width = px(leftSide ? 44 : 236), height = px(leftSide ? 110 : 26);
+    bool weeklyOnly = quota::WeeklyOnly(GetData().snapshot);
+    int width = px(leftSide ? 44 : weeklyOnly ? 116 : 236), height = px(leftSide ? weeklyOnly ? 56 : 110 : 26);
     int x = lastPlacement.left, y = lastPlacement.top;
     if (usableHost) {
         RECT rect{};
@@ -356,7 +357,15 @@ void PaintStrip(HDC target) {
     auto pen = CreatePen(PS_SOLID, px(1), RGB(65,65,65)); auto oldPen = SelectObject(dc, pen); auto oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
     RoundRect(dc, 0, 0, r.right, r.bottom, px(9), px(9));
     SelectObject(dc, oldBrush); SelectObject(dc, oldPen); DeleteObject(pen);
-    if (!leftSide) {
+    if (quota::WeeklyOnly(s.snapshot)) {
+        if (leftSide) {
+            DrawTextAt(dc, L"周", {0,px(5),r.right,px(25)}, smallFont, RGB(167,167,167), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawTextAt(dc, quota::Remaining(week), {0,px(27),r.right,px(51)}, smallFont, NumberColor(week, stale), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        } else {
+            DrawTextAt(dc, L"周", {px(12),0,px(40),r.bottom}, smallFont, RGB(167,167,167));
+            DrawTextAt(dc, quota::Remaining(week), {px(45),0,px(106),r.bottom}, font, NumberColor(week, stale));
+        }
+    } else if (!leftSide) {
         DrawTextAt(dc, L"5小时", {px(11),0,px(53),r.bottom}, smallFont, RGB(167,167,167));
         DrawTextAt(dc, quota::Remaining(five), {px(60),0,px(117),r.bottom}, font, NumberColor(five, stale));
         DrawTextAt(dc, L"周", {px(133),0,px(153),r.bottom}, smallFont, RGB(167,167,167));
@@ -387,6 +396,12 @@ void UpdateTray(const Data& s, bool force = false) {
         trayIdentity = quota::MetricIdentity(home, module); return trayIdentity;
     }();
     for (int i = 0; i < 2; ++i) {
+        if (i == 0 && quota::WeeklyOnly(s.snapshot)) {
+            if (trayAdded[i]) Shell_NotifyIconW(NIM_DELETE, &trays[i]);
+            if (trays[i].hIcon) DestroyIcon(trays[i].hIcon);
+            trays[i].hIcon = nullptr; trayAdded[i] = false; trayValues[i].clear(); trayRenderKeys[i].clear(); trayTips[i].clear();
+            continue;
+        }
         std::wstring full = quota::Remaining(values[i]), value = full;
         if (!value.empty() && value.back() == L'%') value.pop_back();
         std::wstring key = value + (stale ? L"/stale/" : L"/fresh/") + std::to_wstring(size);
@@ -442,7 +457,7 @@ void UpdateState() {
     std::wstring text = quota::Remaining(five) + L"/" + quota::Remaining(week) + (stale ? L"/stale" : L"");
     bool displayChanged = text != paintedText;
     if (displayChanged) { paintedText = text; if(window)InvalidateRect(window, nullptr, FALSE); }
-    tipText = L"剩余配额：5小时 " + quota::Remaining(five) + L"；周 " + quota::Remaining(week);
+    tipText = quota::WeeklyOnly(s.snapshot) ? L"剩余配额：周 " + quota::Remaining(week) : L"剩余配额：5小时 " + quota::Remaining(five) + L"；周 " + quota::Remaining(week);
     tipText += L"\n数据时间：" + LocalTime(s.snapshot.observed);
     tipText += s.fromServer?L"\n来源：账户查询":L"\n来源：本机会话快照";
     if(!s.queryError.empty())tipText+=L"\n查询失败，保留旧值："+s.queryError;
@@ -456,6 +471,7 @@ void UpdateState() {
         SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&info));
     }
     UpdateTray(s);
+    PositionStrip();
     ScheduleNextWake(s); AtomicStatus(s);
     if(settingsWindow){
         std::wstring summary=L"更新 "+LocalTime(s.snapshot.observed)+(s.fromServer?L" · 账户查询":L" · 本地快照");

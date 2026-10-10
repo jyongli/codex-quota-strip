@@ -27,6 +27,9 @@ int main(int argc, char** argv) {
         require(top.x == 426 && top.y == 56 && top.width == 248 && left.x == 106 && left.y == 294, "Overlay must follow host coordinates");
         require(nativequota::HostMatches("com.openai.Codex", "codex") && !nativequota::HostMatches("Browser", "Codex"), "Host identification must exclude unrelated apps");
         require(nativequota::Remaining({true, 20, 1}, 2000) == "-", "Expired quota must become unknown");
+        nativequota::State weekly; weekly.snapshot.weekly = {true, 46, 0}; weekly.snapshot.observed = nativequota::NowMs();
+        require(nativequota::Summary(weekly, settings, nativequota::NowMs()) == "W 54%", "Weekly-only native menu bar must omit five-hour label");
+        require(nativequota::Placement({100, 50, 900, 600}, true, true).height == 56, "Weekly-only native overlay must compact its geometry");
         { nativequota::InstanceLock first(root / "instance.lock"); require(first.acquired(), "First instance must acquire lock"); nativequota::InstanceLock second(root / "instance.lock"); require(!second.acquired(), "Duplicate instance must fail lock"); }
         { nativequota::InstanceLock third(root / "instance.lock"); require(third.acquired(), "Exited instance must release lock"); }
         settings.binary = std::filesystem::absolute(argv[1]).string(); settings.online = true;

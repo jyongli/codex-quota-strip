@@ -111,7 +111,7 @@ class AuthWatcher {
             }
 #else
             Fd notification(inotify_init1(IN_NONBLOCK | IN_CLOEXEC));
-            bool installed = notification.value >= 0 && inotify_add_watch(notification.value, directory.c_str(), IN_CREATE | IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF) >= 0;
+            bool installed = notification.value >= 0 && inotify_add_watch(notification.value, directory.c_str(), IN_CREATE | IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF) >= 0;
 #endif
             changed_(); // 注册监听期间发生的改动也必须补查，避免启动竞争。
             bool rebuild = false;
@@ -132,6 +132,7 @@ class AuthWatcher {
                 for (size_t offset = 0; count > 0 && offset + sizeof(inotify_event) <= static_cast<size_t>(count);) {
                     auto event = reinterpret_cast<const inotify_event*>(bytes + offset);
                     if (event->len && std::strcmp(event->name, "auth.json") == 0) authChanged = true;
+                    if (event->mask & IN_Q_OVERFLOW) authChanged = true;
                     if (event->mask & (IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED)) rebuild = true;
                     offset += sizeof(inotify_event) + event->len;
                 }
@@ -232,14 +233,15 @@ std::string Remaining(quota::Window value, long long now) {
     std::ostringstream out; out.imbue(std::locale::classic()); out << std::fixed << std::setprecision(std::abs(remaining - std::round(remaining)) < 0.001 ? 0 : 1) << remaining << '%'; return out.str();
 }
 bool Stale(const State& state, const Preferences& value, long long now) { return !state.snapshot.observed || now - state.snapshot.observed >= value.staleMinutes * 60000LL; }
-std::string Summary(const State& state, const Preferences& value, long long now) { return "5h " + Remaining(state.snapshot.fiveHour, now) + "  W " + Remaining(state.snapshot.weekly, now) + (Stale(state, value, now) ? " *" : ""); }
+std::string Summary(const State& state, const Preferences& value, long long now) { return (quota::WeeklyOnly(state.snapshot) ? "" : "5h " + Remaining(state.snapshot.fiveHour, now) + "  ") + "W " + Remaining(state.snapshot.weekly, now) + (Stale(state, value, now) ? " *" : ""); }
 bool HostMatches(const std::string& identifier, const std::string& configured) {
     auto name = Lower(identifier), expected = Lower(configured);
     return !expected.empty() && (name.find(expected) != std::string::npos || (expected == "codex" && name.find("chatgpt") != std::string::npos));
 }
-Rect Placement(Rect host, bool left) {
-    if (left) return {host.x + 6, host.y + std::max(40.0, (host.height - 112) / 2), std::min(70.0, std::max(40.0, host.width - 12)), std::min(112.0, std::max(28.0, host.height - 12))};
-    double width = std::min(248.0, std::max(100.0, host.width - 16));
+Rect Placement(Rect host, bool left, bool weeklyOnly) {
+    double height = weeklyOnly ? 56 : 112;
+    if (left) return {host.x + 6, host.y + std::max(40.0, (host.height - height) / 2), std::min(70.0, std::max(40.0, host.width - 12)), std::min(height, std::max(28.0, host.height - 12))};
+    double width = std::min(weeklyOnly ? 124.0 : 248.0, std::max(100.0, host.width - 16));
     return {host.x + std::max(8.0, (host.width - width) / 2), host.y + 6, width, 28};
 }
 InstanceLock::InstanceLock(const std::filesystem::path& file) {

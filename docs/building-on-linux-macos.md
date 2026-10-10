@@ -2,21 +2,21 @@
 
 ## 平台状态 / Platform status
 
-当前程序依赖 Win32／GDI、Windows 文件通知、托盘和进程接口，时间转换也使用 Windows CRT。Linux 的 GCC 和 macOS 的 Apple Clang 无法直接将当前源码构建为原生应用。安装 CMake 或 PowerShell 也不会补齐这些平台接口。
+项目现在提供 Windows、Linux 和 macOS 三套原生产物。本页说明如何从任意系统触发 GitHub Actions 并下载对应包；本机构建及安装见 [中文原生指南](native-desktop.zh-CN.md) / [English native guide](native-desktop.en.md)。
 
-The application depends on Win32/GDI, Windows file notifications, tray/process APIs and Windows CRT time conversion. Linux GCC and macOS Apple Clang cannot directly build it as a native application. Installing CMake or PowerShell does not supply these platform APIs.
+The project now provides Windows, Linux and macOS native artifacts. This page covers dispatching GitHub Actions and downloading the matching package from any OS; use the native guides above for local builds and installation.
 
 | 路线 / Route | 状态 / Status | 产物 / Output |
 | --- | --- | --- |
 | Windows + MSVC | 当前本机构建路线 / Current local build path | Windows x64 `.exe` |
-| Linux／macOS → GitHub Actions | 可从本机发起，实际在 `windows-2022` runner 构建 / Initiate locally; build on a Windows runner | Windows x64 `.exe` |
+| Linux／macOS → GitHub Actions | 三套 runner 分别构建各自平台 / Separate runners build each platform | Windows ZIP、Linux DEB/TGZ、macOS universal ZIP |
 | Linux／macOS → Windows 虚拟机／远程电脑 / VM or remote PC | 在 Windows 来宾系统内按 README 操作 / Follow README inside the Windows environment | Windows x64 `.exe` |
 | MinGW 交叉编译 / Cross-compilation | 当前未提供受支持、已验证的构建入口 / No supported, verified build entry point | 不承诺可用产物 / No guaranteed artifact |
-| Linux／macOS 原生移植 / Native port | 尚未实现 / Not implemented | 无原生二进制 / No native binary |
+| Linux／macOS 本机构建 / Native build | CMake + 平台组件，见原生指南 / CMake + platform components; see native guides | Linux ELF、macOS `.app` |
 
-以下是远程构建 Windows 产物的具体步骤。下载后的 `.exe` 仍需在 Windows 上运行，不会变成 Linux 托盘程序或 macOS `.app`。
+以下命令只操作源码构建，不需要 Codex 登录。可直接从 [Releases](https://github.com/jyongli/codex-quota-strip/releases) 下载公开预览包，无需构建权限；自行触发工作流需要仓库写权限。
 
-The steps below build Windows artifacts remotely. Downloaded `.exe` files still require Windows; they do not become Linux tray applications or macOS `.app` bundles.
+These build commands do not require a Codex login. Public previews can be downloaded from [Releases](https://github.com/jyongli/codex-quota-strip/releases) without build permission; workflow dispatch requires write access.
 
 ## 1. 安装 Git 和 GitHub CLI / Install Git and GitHub CLI
 
@@ -61,16 +61,16 @@ cd codex-quota-strip
 
 Choose one clone example. Run the following commands from that repository root; without `--repo`, GitHub CLI uses the current repository.
 
-## 3. 触发 Windows 构建 / Dispatch the Windows build
+## 3. 触发三平台构建 / Dispatch the desktop build
 
 ```bash
 gh workflow run build-windows.yml --ref main
 gh run list --workflow build-windows.yml --branch main --event workflow_dispatch --limit 5
 ```
 
-工作流只手动触发，在 `windows-2022` 中执行 `Build.ps1` 和默认 `Test.ps1`。不需要 Codex 登录，不进行账号在线查询；也不验证真实 Codex 窗口或交互式集成测试。工作流配置见 [build-windows.yml](../.github/workflows/build-windows.yml)，runner 类型见 [GitHub 官方说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
+工作流名为 `Build Desktop`，文件名保留为 `build-windows.yml`。手动触发后，Windows 执行 MSVC 构建／默认测试；Ubuntu 22.04 执行原生编译、CTest、X11 UI 和单实例测试；macOS 14 构建 arm64/x86_64 通用程序并执行 CTest／UI smoke。全部使用合成数据，不进行真实账号查询。配置见 [工作流](../.github/workflows/build-windows.yml)，runner 类型见 [GitHub 官方说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
 
-The manual-only workflow runs `Build.ps1` and default `Test.ps1` on `windows-2022`, without a Codex login or online account queries. It does not verify real Codex windows or interactive integration tests. See [the workflow](../.github/workflows/build-windows.yml) and [GitHub's runner documentation](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+The workflow is named `Build Desktop`, retaining the filename `build-windows.yml`. It manually runs Windows MSVC/default tests, Ubuntu 22.04 native builds/CTest/X11 UI/single-instance tests, and macOS 14 universal arm64/x86_64 builds/CTest/UI smoke. Tests use synthetic data, not live account queries. See the [workflow](../.github/workflows/build-windows.yml) and [runner documentation](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
 ## 4. 等待并下载 / Wait and download
 
@@ -80,32 +80,39 @@ Select your dispatched run, checking its branch, commit and timestamp. Replace `
 
 ```bash
 gh run watch RUN_ID --exit-status
+```
+
+按平台选择一条下载命令 / Choose the download command for your platform:
+
+```bash
+gh run download RUN_ID --name codex-quota-strip-Linux-native --dir ./artifacts/linux
+gh run download RUN_ID --name codex-quota-strip-macOS-native --dir ./artifacts/macos
 gh run download RUN_ID --name codex-quota-strip-windows-x64 --dir ./artifacts/windows-x64
 ```
 
 命令参考 / Command references: [workflow run](https://cli.github.com/manual/gh_workflow_run), [run download](https://cli.github.com/manual/gh_run_download).
 
-产物含 `CodexQuotaStrip.exe`、`Start-With-Codex.ps1`、`LICENSE`、`BUILD-INFO.txt` 和 `SHA256SUMS.txt`。构建标识记录源码提交；产物保留 14 天，过期可重新触发。产物目前没有代码签名。
+每份产物含对应平台包、`LICENSE`、`BUILD-INFO.txt` 和 `SHA256SUMS.txt`。原生包还包含 UI smoke 输出。构建标识记录源码提交，Actions 产物保留 14 天，过期可重跑；Release 附件与 Actions 保留期无关。macOS 使用 ad-hoc 签名，尚未 Developer ID 签名／公证。
 
-The artifact contains `CodexQuotaStrip.exe`, `Start-With-Codex.ps1`, `LICENSE`, `BUILD-INFO.txt` and `SHA256SUMS.txt`. Build info identifies the source commit. Artifacts are retained for 14 days; dispatch a new run after expiry. Binaries are currently unsigned.
+Each artifact contains its platform package, `LICENSE`, `BUILD-INFO.txt` and `SHA256SUMS.txt`. Native artifacts also include UI smoke output. Build info identifies the commit. Actions artifacts expire after 14 days; Release assets are independent of that retention. macOS uses ad-hoc signing without Developer ID/notarization.
 
 Linux 校验 / Linux checksum verification:
 
 ```bash
-cd artifacts/windows-x64
+cd artifacts/linux
 sha256sum --check SHA256SUMS.txt
 ```
 
 macOS 校验 / macOS checksum verification:
 
 ```bash
-cd artifacts/windows-x64
+cd artifacts/macos
 shasum -a 256 --check SHA256SUMS.txt
 ```
 
-将整个产物目录复制到 Windows，在该目录启动：
+Windows 包在 Windows 启动；Linux／macOS 安装步骤见原生指南：
 
-Copy the whole artifact directory to Windows and launch from that directory:
+Run Windows artifacts on Windows; use the native guide for Linux/macOS installation:
 
 ```powershell
 .\CodexQuotaStrip.exe --settings
@@ -117,6 +124,6 @@ Copy the whole artifact directory to Windows and launch from that directory:
 
 Clone the repository in an x64 Windows VM or remote Windows PC, install MSVC/SDK and follow the [README](../README.md). Test UI behavior in an interactive Windows desktop. x64 emulation in an ARM Windows VM on Apple Silicon is unverified.
 
-原生移植需要替换托盘与窗口层、文件监听、进程生命周期、设置存储和时间转换，并重新验证平台上的 Codex 查询及认证路径；当前文档不宣称已完成这些适配。
+原生预览已实现各自的托盘／菜单栏、配置、查询和文件元数据事件。Linux Wayland 暂无窗口悬浮，macOS 的真实 Codex AX 跟随和账号查询尚待用户设备验证；完整限制见原生指南。
 
-A native port requires replacing tray/window integration, file notifications, process lifecycle, settings storage and time conversion, then validating Codex query/authentication paths on each platform. These adaptations are not implemented here.
+Native previews implement tray/menu bar, settings, queries and auth metadata events. Linux Wayland lacks window following; macOS real Codex AX following and account queries still require user-device validation. See the native guides for full limitations.

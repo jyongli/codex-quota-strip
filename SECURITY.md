@@ -18,12 +18,12 @@ Do not include tokens, `auth.json`, complete sessions, personal paths or directl
 
 ## 数据边界 / Data boundaries
 
-本程序读取 Codex 会话日志提取额度事件；不直接解析认证文件内容。账号查询交由本机 Codex app-server 处理，其进程在查询完成、超时或退出时清理。启用 `--status` 会在明确指定的路径写入诊断状态；这些文件不应提交到仓库。
+Windows 版读取 Codex 会话日志提取额度事件，原生预览版使用在线账号查询和内存快照；两者不直接解析认证文件内容。账号查询交由本机 Codex app-server 处理，其进程在查询完成、超时或退出时清理。Windows 的 `--status` 会在明确指定的路径写入诊断状态；这些文件不应提交到仓库。macOS 窗口跟随需用户授予辅助功能权限，不请求录屏权限。
 
-The utility reads Codex session logs to extract quota events, without directly parsing authentication-file contents. Local Codex app-server handles account queries, with cleanup on completion, timeout or exit. `--status` writes diagnostic state to the explicitly selected path; do not commit those files.
+Windows reads session logs for quota events; native previews use online queries and in-memory snapshots. Neither directly parses authentication-file contents. Local Codex app-server handles queries, with cleanup on completion, timeout or exit. Windows `--status` writes diagnostic state to an explicit path; do not commit those files. macOS window following requires user-granted Accessibility access, without Screen Recording permission.
 
 ## 构建产物 / Build artifacts
 
-GitHub Actions 产物来自对应提交，当前没有代码签名或原生 Linux／macOS 版本。产物包含许可证和 SHA-256 清单；校验清单用于检测下载或传输差异，不等于独立的签名验证。
+GitHub Actions 生成 Windows、Linux x64 和 macOS 通用产物，包含许可证和 SHA-256 清单。Windows／Linux 无发布者签名；macOS 只有 ad-hoc 完整性签名，没有 Apple Developer ID 或公证。校验清单用于检测下载或传输差异，不等于独立的发布者签名验证。
 
-GitHub Actions artifacts correspond to their recorded source commit. They are currently unsigned and are Windows builds, without native Linux/macOS versions. Artifacts include a license and SHA-256 manifest; checksums detect transfer differences but are not an independent signature.
+GitHub Actions produces Windows, Linux x64 and universal macOS artifacts with license/checksums. Windows/Linux lack publisher signatures; macOS has only an ad-hoc integrity signature, without Apple Developer ID or notarization. Checksums detect transfer differences but do not independently verify publisher identity.

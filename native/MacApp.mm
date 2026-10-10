@@ -30,6 +30,7 @@ static NSString* Text(const std::string& value) { return [[NSString alloc] initW
     AXObserverRef observer;
     AXUIElementRef application, focused;
     pid_t observedPid;
+    bool lastWeeklyOnly;
     std::filesystem::path configRoot;
     dispatch_source_t terminateSignal, interruptSignal;
 }
@@ -139,7 +140,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (AXUIElementCopyAttributeValue(focused, kAXMinimizedAttribute, &minimized) == kAXErrorSuccess && minimized == kCFBooleanTrue) valid = false;
     if (point) CFRelease(point); if (size) CFRelease(size); if (minimized) CFRelease(minimized);
     if (!valid || dimensions.width < 100 || dimensions.height < 40) { [strip orderOut:nil]; return; }
-    auto frame = Placement({origin.x, origin.y, dimensions.width, dimensions.height}, engine->preferences().left);
+    auto frame = Placement({origin.x, origin.y, dimensions.width, dimensions.height}, engine->preferences().left, quota::WeeklyOnly(engine->state().snapshot));
     // AX 使用主屏左上角坐标；AppKit 窗口使用左下角坐标，保留跨屏的全局 X/Y。
     double mainHeight = NSMaxY([NSScreen screens].firstObject.frame);
     [strip setFrame:NSMakeRect(frame.x, mainHeight - frame.y - frame.height, frame.width, frame.height) display:YES];
@@ -149,9 +150,11 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (!engine) return;
     auto current = engine->state(); auto prefs = engine->preferences(); auto now = NowMs(); auto text = Summary(current, prefs, now);
     statusItem.button.title = Text(text);
-    std::string panel = prefs.left ? "5h\n" + Remaining(current.snapshot.fiveHour, now) + "\nW\n" + Remaining(current.snapshot.weekly, now) : text;
+    bool weeklyOnly = quota::WeeklyOnly(current.snapshot);
+    std::string panel = prefs.left ? (weeklyOnly ? "" : "5h\n" + Remaining(current.snapshot.fiveHour, now) + "\n") + "W\n" + Remaining(current.snapshot.weekly, now) : text;
     stripText.stringValue = Text(panel); stripText.maximumNumberOfLines = prefs.left ? 4 : 1;
     stripText.textColor = Stale(current, prefs, now) ? NSColor.lightGrayColor : NSColor.whiteColor;
+    if (lastWeeklyOnly != weeklyOnly) { lastWeeklyOnly = weeklyOnly; [self updateHost]; }
     if (status) {
         std::string detail = text + "\n" + (current.refreshing ? "Refreshing…" : !current.error.empty() ? current.error : !prefs.online ? "Online queries disabled" : "Account quota");
         if (!options.smoke && prefs.overlay && !AXIsProcessTrusted()) detail += "\nAllow Accessibility access to follow Codex windows.";

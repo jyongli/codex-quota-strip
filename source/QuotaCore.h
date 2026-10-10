@@ -13,6 +13,8 @@
 namespace quota {
 struct Window { bool present = false; double used = 0; long long resets = 0; };
 struct Snapshot { Window fiveHour, weekly; long long observed = 0; };
+// 已确认账号只提供周窗口才收起 5 小时区；未知、失败和已知窗口过期不推断账号类型。
+inline bool WeeklyOnly(const Snapshot& snapshot) { return snapshot.observed > 0 && snapshot.weekly.present && !snapshot.fiveHour.present; }
 
 // Only small, genuine quota events enter this parser. Conversation text is never parsed.
 struct Json {

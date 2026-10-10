@@ -6,9 +6,9 @@ Focused issues and pull requests are welcome in Chinese or English. Start with t
 
 ## 问题报告 / Bug reports
 
-请提供提交版本、Windows 版本、Codex 安装方式、复现步骤、预期与实际结果，以及相关的刷新／显示设置。截图只保留问题区域，删除账号信息。安全问题请按 [SECURITY.md](SECURITY.md) 处理。
+请提供提交版本、操作系统／桌面会话类型、Codex 安装方式、复现步骤、预期与实际结果，以及相关的刷新／显示设置。截图只保留问题区域，删除账号信息。安全问题请按 [SECURITY.md](SECURITY.md) 处理。
 
-Include the commit, Windows version, Codex installation method, reproduction steps, expected/actual behavior, and relevant refresh/display settings. Crop screenshots and remove account details. Follow [SECURITY.md](SECURITY.md) for security issues.
+Include the commit, OS/desktop session type, Codex installation method, reproduction steps, expected/actual behavior, and relevant refresh/display settings. Crop screenshots and remove account details. Follow [SECURITY.md](SECURITY.md) for security issues.
 
 ## 开发与验证 / Development and validation
 
@@ -34,6 +34,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test.ps1 -Integration
 PowerShell 7 可将 `powershell.exe` 替换为 `pwsh.exe`。纯文档改动检查命令、链接和 Markdown 渲染即可；不要宣称未执行的测试通过。自动构建仅执行默认测试，不验证真实 Codex 窗口和在线账号查询。
 
 Use `pwsh.exe` for PowerShell 7. For documentation-only changes, check commands, links and Markdown rendering. Do not report unexecuted checks as passing. The hosted build runs default tests only, without validating real Codex windows or online account queries.
+
+Linux／macOS 使用 [原生构建步骤](docs/native-desktop.zh-CN.md) 和 CTest；涉及平台 UI 的改动需运行相应 smoke 测试。CI 包含 X11 合成窗口跟随和 macOS 基础 UI 验证，不表示真实账号或所有桌面环境已通过。
+
+For Linux/macOS, follow the [native build guide](docs/native-desktop.en.md) and CTest, plus platform UI smoke tests for relevant changes. CI verifies synthetic X11 following and basic macOS UI, not live accounts or every desktop environment.
 
 ## 设计约束 / Design constraints
 

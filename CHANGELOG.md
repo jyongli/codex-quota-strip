@@ -1,6 +1,14 @@
 # 变更记录 / Changelog
 
-## 未发布 / Unreleased
+## v3.0.0-preview.1 — 2026-10-10
+
+- 添加 Linux x64 托盘／X11 悬浮条和 macOS 通用菜单栏／辅助功能悬浮条原生预览版。 / Added native Linux x64 tray/X11 overlay and universal macOS menu bar/Accessibility overlay previews.
+- 明确只提供周额度的账号自动隐藏 5 小时区域；恢复窗口后自动还原。 / Accounts with confirmed weekly-only quotas hide the five-hour region and restore it when available.
+- 认证元数据事件清空旧账号快照，稳定用户级实例锁防止账号目录变化后的重复启动。 / Auth metadata notifications invalidate old snapshots; stable per-user locks prevent duplicate instances after account-home changes.
+- 原生核心、真实进程协议、配置／账号变化、Linux X11 UI 和 macOS UI smoke 纳入云端验证。 / Hosted validation covers native core/process protocol, settings/account changes, Linux X11 UI and macOS UI smoke.
+- 原生版暂不提供 Windows 的会话日志回退；Wayland 仅托盘；macOS 未 Developer ID 签名／公证，真实用户 AX 跟随尚待设备验证。 / Native previews omit Windows session-log fallback; Wayland is tray-only; macOS has no Developer ID/notarization and real-user AX following remains unverified.
+
+## 初始公开源码与文档 / Initial public source and documentation
 
 ### 2026-10-10
 
@@ -17,4 +25,4 @@
 - 原生深色配置窗口、账号查询、本地事件回退与窗口重建。 / Native dark settings window, account queries, local-event fallback and host-window recovery.
 - MSVC 构建脚本，以及解析、设置、图标和集成测试。 / MSVC build scripts and parsing, settings, icon and integration tests.
 
-日期是文档／源码记录，不代表已发布同名 Release 或版本标签。 / Dates identify source/documentation changes, not published releases or version tags.
+旧记录日期仅标识源码／文档变更。 / Dates in older entries identify source/documentation changes.

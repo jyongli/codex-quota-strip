@@ -2,15 +2,20 @@
 
 **中文** | [English](README.en.md) · [MIT 许可证](LICENSE) · [贡献指南](CONTRIBUTING.md) · [安全说明](SECURITY.md) · [变更记录](CHANGELOG.md)
 
-Windows 上的轻量 Codex 配额工具，在系统托盘显示 **5 小时剩余配额** 和 **周剩余配额**，可选在 Codex 窗口顶部或左侧显示配额条。
+Windows、Linux 和 macOS 上的轻量 Codex 配额工具，显示 **5 小时剩余配额** 和 **周剩余配额**，支持托盘／菜单栏及窗口跟随配额条。
 
-使用 C++17、Win32 和 GDI 构建，不依赖 Electron 或 WebView。它是独立的辅助程序，与 OpenAI 没有官方隶属关系。**当前程序界面为中文；英文说明请切换到 [README.en.md](README.en.md)。**
+使用 C++17 和原生系统接口，不依赖 Electron 或 WebView。它是独立的辅助程序，与 OpenAI 没有官方隶属关系。Windows 界面为中文，原生 Linux／macOS 预览界面为英文；英文说明见 [README.en.md](README.en.md)。
+
+**[下载 v3.0.0-preview.1](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.1)** · [Linux／macOS 安装与构建](docs/native-desktop.zh-CN.md)
+
+下文的命令及详细配置主要针对 Windows；Linux／macOS 请使用上面的独立原生指南。
 
 ![配置窗口](docs/images/configuration.png)
 
 ## 功能
 
 - 两个数字托盘图标显示剩余百分比，缺失字段显示 `-`。
+- 账号明确只提供周额度时（例如部分 Pro 账号），自动隐藏 5 小时图标／标签并缩短悬浮条。未知启动状态和已知窗口暂时过期仍显示 `-`，新数据提供 5 小时窗口后自动恢复。
 - 顶部／左侧配额条仅在 Codex 处于前台时显示；切换应用仍保留托盘数字。
 - 原生深色配置窗口，可设刷新间隔、旧数据提示时间、查询条件和显示位置。
 - 默认每 120 秒在线查询，支持 30–3600 秒；旧数据提示默认 5 分钟，支持 1–120 分钟。
@@ -27,7 +32,9 @@ Windows 上的轻量 Codex 配额工具，在系统托盘显示 **5 小时剩余
 | Windows PowerShell 7 | 使用 `pwsh.exe`，已验证构建及测试入口。 |
 | CMD / Git Bash | 调用 `powershell.exe`，不直接在 Bash 中运行 `.ps1`。 |
 | 原生 Windows Codex CLI | 条件支持；需运行中的兼容 `codex.exe` 或下文回退目录，通常使用仅托盘模式。 |
-| WSL / Linux / macOS | 无原生托盘版本；可通过 GitHub Actions 构建 Windows 产物，见下文。不能自动发现 WSL 内的 Codex 进程或 Linux 可执行文件。 |
+| Linux x64 | 原生 `.deb`／`.tar.gz`；GTK3／Ayatana 托盘，X11 窗口跟随，Wayland 托盘模式。 |
+| macOS 14+ | 原生通用 `.app`，Apple Silicon／Intel；菜单栏和辅助功能权限下的窗口跟随。预览版尚未 Developer ID 签名／公证。 |
+| WSL | Windows 程序不发现 WSL 内的 Codex；原生 Linux 界面需相应 Linux 桌面／托盘会话，未验证 WSLg。 |
 | Windows ARM64 / 无桌面服务器 | 当前仅输出 x64；ARM64 模拟未验证，界面和集成测试需要交互式桌面。 |
 
 ## 安装与构建
@@ -78,7 +85,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Build.ps1
 
 脚本通过 `vswhere` 查找 C++ 工具并配置 MSVC／SDK 路径，普通 PowerShell 即可，无需 Developer Command Prompt。SDK 只选择头文件和 x64 库均完整的最新版本，跳过不完整安装；暂不提供工具链版本固定参数。输出 `build\CodexQuotaStrip.exe` 与 `build\Start-With-Codex.ps1`；运行时不需要编译器。
 
-Linux／macOS 用户可在本机通过 GitHub CLI 发起 Windows runner 构建，或使用 Windows 虚拟机；安装步骤、触发／下载和校验命令见 [Linux／macOS 构建说明](docs/building-on-linux-macos.md)。产物仍是 Windows `.exe`，当前源码没有 Linux／macOS 原生构建支持。
+Linux／macOS 可按 [原生构建指南](docs/native-desktop.zh-CN.md) 使用 CMake 构建各自程序；也可按 [远程构建说明](docs/building-on-linux-macos.md) 使用 GitHub Actions 下载三平台产物。
 
 ### 4. 启动与配置
 

@@ -2,15 +2,20 @@
 
 [中文](README.md) | **English** · [MIT License](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
-A lightweight Windows utility displaying **remaining five-hour quota** and **remaining weekly quota** in the system tray, with an optional strip at the top or left of the Codex window.
+A lightweight Windows, Linux and macOS utility displaying **remaining five-hour quota** and **remaining weekly quota** in the tray/menu bar, with an optional window-following strip.
 
-Built with C++17, Win32 and GDI, without Electron or WebView. This is an independent companion, not affiliated with OpenAI. **The application UI is currently Chinese. The Chinese guide is in [README.md](README.md).**
+Built with C++17 and native platform APIs, without Electron or WebView. This is an independent companion, not affiliated with OpenAI. The Windows UI is Chinese; native Linux/macOS preview UIs are English. See [README.md](README.md) for the Chinese guide.
+
+**[Download v3.0.0-preview.1](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.1)** · [Linux/macOS installation and build guide](docs/native-desktop.en.md)
+
+Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 
 ![Settings window](docs/images/configuration.png)
 
 ## Features
 
 - Two numeric tray icons show remaining percentages; missing fields display `-`.
+- When an account explicitly provides only weekly quota (including some Pro accounts), the five-hour icon/label is hidden and the strip shrinks. Unknown startup data or temporarily expired known windows keep `-`; a later five-hour window restores its display.
 - The optional top/left strip appears while Codex is in the foreground; tray icons remain when switching applications.
 - Native dark settings window for refresh interval, stale-data threshold, query conditions and display position.
 - Queries default to every 120 seconds, configurable from 30–3600 seconds; the stale threshold defaults to 5 minutes, configurable from 1–120 minutes.
@@ -27,7 +32,9 @@ Built with C++17, Win32 and GDI, without Electron or WebView. This is an indepen
 | Windows PowerShell 7 | Use `pwsh.exe`; build and test entry points have been verified. |
 | CMD / Git Bash | Invoke `powershell.exe`; do not execute `.ps1` directly in Bash. |
 | Native Windows CLI | Conditional support; requires a running compatible `codex.exe` or the fallback directory below. Usually use tray-only mode. |
-| WSL / Linux / macOS | No native tray version; Windows artifacts can be built through GitHub Actions as described below. WSL processes/Linux executables are not automatically discovered. |
+| Linux x64 | Native `.deb`/`.tar.gz`; GTK3/Ayatana tray, X11 window following, tray-only mode on Wayland. |
+| macOS 14+ | Native universal `.app` for Apple Silicon/Intel; menu bar and Accessibility-based window following. Preview has no Developer ID signature/notarization. |
+| WSL | Windows app does not discover WSL Codex; native Linux UI requires a suitable Linux desktop/tray session. WSLg is unverified. |
 | Windows ARM64 / headless servers | Builds target x64; ARM64 emulation is unverified. UI and integration tests require an interactive desktop. |
 
 ## Install and build
@@ -78,7 +85,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Build.ps1
 
 The script uses `vswhere` to discover C++ tools and sets MSVC/SDK paths. A regular PowerShell session is sufficient; Developer Command Prompt is unnecessary. It selects the latest SDK with both headers and x64 libraries, skipping incomplete installations. There is no toolchain-version pinning option. Outputs are `build\CodexQuotaStrip.exe` and `build\Start-With-Codex.ps1`; running the app does not require a compiler.
 
-Linux/macOS users can dispatch a Windows-runner build through GitHub CLI or use a Windows VM. See [Building from Linux and macOS](docs/building-on-linux-macos.md) for installation, dispatch, download and checksum commands. Outputs remain Windows `.exe` files; native Linux/macOS builds are not currently supported.
+Linux/macOS users can build native applications with CMake using the [native guide](docs/native-desktop.en.md), or use [GitHub Actions](docs/building-on-linux-macos.md) to download artifacts for all three platforms.
 
 ### Launch and configure
 

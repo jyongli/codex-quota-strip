@@ -15,6 +15,9 @@ jobs:
         os: [ubuntu-22.04, macos-14]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -62,6 +65,10 @@ jobs:
             cp CodexQuotaStrip-linux-x86_64.deb CodexQuotaStrip-linux-x86_64.tar.gz artifact/
           else
             cp CodexQuotaStrip-macos-universal.zip artifact/
+            # 检查打包后的 .app，确认资源复制没有破坏签名且包含两个架构。
+            unzip -q CodexQuotaStrip-macos-universal.zip -d package-check
+            codesign --verify --deep --strict package-check/CodexQuotaStrip-macos-universal/CodexQuotaStrip.app
+            lipo -verify_arch arm64 x86_64 package-check/CodexQuotaStrip-macos-universal/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip
           fi
           cp ../../LICENSE artifact/
           cp ui-smoke.txt artifact/

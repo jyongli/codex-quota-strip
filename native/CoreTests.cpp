@@ -12,6 +12,11 @@ int main() {
         require(result.weekly.present && result.weekly.used == 88 && result.fiveHour.present && result.fiveHour.used == 20, "Quota windows must map by duration");
         require(quota::Remaining({}) == L"-", "Missing values must display a dash");
         require(quota::Remaining(result.fiveHour) == L"80%", "Remaining value must be 100 minus used");
+        require(!quota::WeeklyOnly(result), "Unknown startup must retain five-hour placeholder");
+        result.observed = 1; result.fiveHour.present = false;
+        require(quota::WeeklyOnly(result), "Confirmed weekly-only data must hide five-hour UI");
+        result.fiveHour = {true, 20, 1};
+        require(!quota::WeeklyOnly(result), "Known but expired five-hour window must not be hidden as unsupported");
         bool rejected = false;
         try { quota::JsonParser(std::string(40000, 'x')).parse(); } catch (...) { rejected = true; }
         require(rejected, "Oversized messages must be rejected");
