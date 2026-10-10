@@ -2,9 +2,11 @@
 
 [中文](README.md) | **English** · [MIT License](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
-A lightweight Windows, Linux and macOS utility displaying **remaining five-hour quota** and **remaining weekly quota** in the tray/menu bar, with an optional window-following strip.
+Codex Quota Strip is a lightweight desktop companion for Windows, Linux and macOS. It puts **remaining five-hour quota** and **remaining weekly quota** in the system tray/menu bar, with an optional top/left strip that follows the Codex window. Check your remaining allowance while working without repeatedly opening the account menu.
 
-Built with C++17 and native platform APIs, without Electron or WebView. This is an independent companion, not affiliated with OpenAI. All three platforms support Chinese/English switching in Settings; save and apply for immediate changes that persist across restarts. Translations are local. See [README.md](README.md) for the Chinese guide.
+It is intended for Codex desktop or CLI users who want visible quota values and control over the query interval. Queries use the locally signed-in Codex account, without another API key or model inference. CLI users will usually use tray/menu-bar-only mode.
+
+Built with C++17 and native platform interfaces, without Electron or WebView. Chinese/English can be selected in Settings and applied immediately. This is an independently running companion, not affiliated with OpenAI. See [README.md](README.md) for the Chinese guide.
 
 **[Download v3.0.0-preview.3](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.3)** · [Linux/macOS installation and build guide](docs/native-desktop.en.md)
 
@@ -12,16 +14,45 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 
 ![Settings window](docs/images/configuration.png)
 
-## Features
+## Main features
 
-- Two numeric tray icons show remaining percentages; missing fields display `-`.
-- When an account explicitly provides only weekly quota (including some Pro accounts), the five-hour icon/label is hidden and the strip shrinks. Unknown startup data or temporarily expired known windows keep `-`; a later five-hour window restores its display.
-- The optional top/left strip appears while Codex is in the foreground; tray icons remain when switching applications.
-- Native dark settings window for refresh interval, stale-data threshold, query conditions and display position.
-- Queries default to every 120 seconds, configurable from 30–3600 seconds; the stale threshold defaults to 5 minutes, configurable from 1–120 minutes.
-- Queries use locally authenticated `codex.exe app-server --stdio`; local session events provide startup and offline snapshots.
-- Event-driven file notifications and incremental reads, without screen recording or screenshot monitoring; query subprocesses are cleaned up on completion, timeout or exit.
-- Repeated launches with the same data directory reuse one instance.
+| Feature | Details |
+| --- | --- |
+| Persistent quota display | Numeric tray icons on Windows/Linux and menu-bar text on macOS show remaining five-hour and weekly percentages. |
+| Window-following strip | Optional top or left placement follows the host window. The strip appears only while a matching Codex window is foreground and hides when you switch apps; tray/menu-bar values remain available. |
+| Weekly-only display | If account data explicitly provides only weekly quota, the five-hour icon/label is hidden and the strip shrinks. A later five-hour window restores it automatically, without choosing an account type manually. |
+| Configurable auto-refresh | Queries default to every 120 seconds, adjustable from 30–3600 seconds. You can query only while the host app is open or disable online queries. |
+| Manual refresh and status | Refresh from the tray/menu bar or settings window and view quota/refresh status. The stale-data threshold is adjustable from 1–120 minutes, with a 5-minute default. |
+| Chinese and English UI | Choose Chinese or English in Settings. Saving immediately updates labels, menus and status messages; the choice survives restart. |
+| Native settings window | Set the refresh interval, stale threshold, query conditions and display position through a GUI. Windows uses a native dark style; Linux/macOS use their platform interfaces. |
+| Local account and settings | Queries use the signed-in local Codex and selected data directory. Settings stay on the computer; authentication changes clear the previous account snapshot. |
+| Single instance and cleanup | Repeated launches reuse an instance. Query subprocesses are cleaned up on completion, timeout or app exit. Windows identifies instances by Codex data directory; Linux/macOS use the user configuration directory. |
+
+### Understanding values and refresh
+
+- Values show **remaining quota**. For example, weekly 52% means 52% remains, rather than 52% used.
+- `-` means data has not arrived, the upstream response omitted the window, or a known window expired. It does not mean unlimited quota. The five-hour region hides only after confirmed weekly-only data; plan names such as Pro are not used to guess availability.
+- Online quotas are queried at the configured interval. Windows also reacts to quota events in local sessions. Displays update when data arrives; freshness depends on the interval and upstream data, without guaranteed second-by-second synchronization.
+- Gray values or `*` in native previews indicate stale snapshots. Failed queries retain the last snapshot and show a failure status so it is not presented as a fresh result.
+
+### Low-resource design
+
+- C++17 with Win32/GTK3/AppKit, using native system tray, menu and settings interfaces.
+- Window following primarily responds to system window events, without screen recording, screenshot monitoring or a resident translation service.
+- Windows incrementally reads new session records through file notifications. Account queries run at intervals using short-lived subprocesses.
+- Translations use built-in dictionaries without extra network calls. Closing Settings leaves tray/menu-bar values and the optional strip running.
+
+### Platform differences
+
+| Capability | Windows x64 | Linux x64 | macOS 14+ |
+| --- | --- | --- | --- |
+| Persistent system display | Numeric tray icons | Numeric tray icons; desktop AppIndicator support required | Menu-bar text |
+| Top/left window following | Supported | X11 supported; tray-only on Wayland | Accessibility permission required |
+| Account queries and Chinese/English settings | Supported | Supported | Supported |
+| Local session-log fallback | Supported | Not included in the current preview | Not included in the current preview |
+| Download package | ZIP | DEB/TGZ | Universal Apple Silicon/Intel APP ZIP |
+
+See the [native platform guide](docs/native-desktop.en.md) for Linux/macOS installation, settings and preview validation scope.
 
 ## Environments
 
