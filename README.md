@@ -1,6 +1,6 @@
 # Codex Quota Strip
 
-**中文 / English**
+**中文 / English** · [MIT License](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 Windows 上的轻量 Codex 配额工具，在系统托盘显示 **5 小时剩余配额** 和 **周剩余配额**，可选在 Codex 窗口顶部或左侧显示配额条。
 
@@ -31,7 +31,7 @@ Built with C++17, Win32 and GDI, without Electron or WebView. This is an indepen
 | Windows PowerShell 7 | 使用 `pwsh.exe`，已验证构建及测试入口。 / Use `pwsh.exe`; build and test entry points have been verified. |
 | CMD / Git Bash | 调用 `powershell.exe`，不直接在 Bash 中运行 `.ps1`。 / Invoke `powershell.exe`; do not execute `.ps1` directly in Bash. |
 | 原生 Windows Codex CLI / Native Windows CLI | 条件支持；需运行中的兼容 `codex.exe` 或下文回退目录，通常使用仅托盘模式。 / Conditional support; requires a running compatible `codex.exe` or the fallback directory below. Usually use tray-only mode. |
-| WSL / Linux / macOS | 无原生托盘版本；不能自动发现 WSL 内的 Codex 进程或 Linux 可执行文件。 / No native tray version; Codex processes and Linux executables inside WSL are not automatically discovered. |
+| WSL / Linux / macOS | 无原生托盘版本；可通过 GitHub Actions 构建 Windows 产物，见下文。不能自动发现 WSL 内的 Codex 进程或 Linux 可执行文件。 / No native tray version; Windows artifacts can be built through GitHub Actions as described below. WSL processes/Linux executables are not automatically discovered. |
 | Windows ARM64 / 无桌面服务器 / headless servers | 当前仅输出 x64；ARM64 模拟未验证，界面和集成测试需要交互式桌面。 / Builds target x64; ARM64 emulation is unverified. UI and integration tests require an interactive desktop. |
 
 ## 安装与构建 / Install and build
@@ -89,6 +89,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./Build.ps1
 脚本通过 `vswhere` 查找 C++ 工具并配置 MSVC／SDK 路径，普通 PowerShell 即可，无需 Developer Command Prompt。会选择找到的最新安装／工具目录，暂不提供工具链版本固定参数。输出 `build\CodexQuotaStrip.exe` 与 `build\Start-With-Codex.ps1`；运行时不需要编译器。
 
 The script uses `vswhere` to discover C++ tools and sets MSVC/SDK paths. A regular PowerShell session is sufficient; Developer Command Prompt is unnecessary. It selects the latest installation/tool directories it finds and has no toolchain-version pinning option. Outputs are `build\CodexQuotaStrip.exe` and `build\Start-With-Codex.ps1`; running the app does not require a compiler.
+
+Linux／macOS 用户可在本机通过 GitHub CLI 发起 Windows runner 构建，或使用 Windows 虚拟机；安装步骤、触发／下载和校验命令见 [Linux／macOS 构建说明](docs/building-on-linux-macos.md)。产物仍是 Windows `.exe`，当前源码没有 Linux／macOS 原生构建支持。
+
+Linux/macOS users can dispatch a Windows-runner build through GitHub CLI or use a Windows VM. See [Building from Linux and macOS](docs/building-on-linux-macos.md) for installation, dispatch, download and checksum commands. Outputs remain Windows `.exe` files; native Linux/macOS builds are not currently supported.
 
 ### 4. 启动与配置 / Launch and configure
 
@@ -369,4 +373,12 @@ The utility reads session logs to extract quota events. It does not directly rea
 | `source/TrayIcons.h` | 数字图标 / numeric icons |
 | `Build.ps1`, `Test.ps1` | 构建和测试入口 / build and test entry points |
 
-本仓库尚未指定软件许可证。 / No software license has been specified for this repository yet.
+## 许可与贡献 / License and contribution
+
+本项目源码和文档采用 [MIT License](LICENSE)，允许使用、修改、分发和商用，需保留版权及许可声明；软件按原样提供，不作担保。第三方工具、运行库、Windows SDK 和 Codex 服务仍适用各自条款。
+
+Source and documentation are licensed under the [MIT License](LICENSE), permitting use, modification, distribution and commercial use while retaining copyright/license notices. The software is provided as-is without warranty. Third-party tools, runtimes, Windows SDK and Codex services retain their own terms.
+
+参与开发请查看 [贡献指南](CONTRIBUTING.md)；问题报告与数据边界见 [安全说明](SECURITY.md)；源码变更见 [变更记录](CHANGELOG.md)。
+
+See [Contributing](CONTRIBUTING.md) for development, [Security](SECURITY.md) for reporting/data boundaries, and the [Changelog](CHANGELOG.md) for source changes.

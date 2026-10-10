@@ -1,0 +1,48 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+
+# 仅需要读取源码；工作流不使用账号凭据、不发布 Release、不写入仓库。
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build Windows x64
+        run: ./Build.ps1
+      - name: Run default tests
+        run: ./Test.ps1
+      - name: Package artifact with license and checksums
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Join-Path $PWD 'build/package'
+          New-Item -ItemType Directory -Path $package -Force | Out-Null
+          # 只打包明确列出的公开文件，避免混入测试数据和本机配置。
+          foreach ($file in @('build/CodexQuotaStrip.exe', 'build/Start-With-Codex.ps1', 'LICENSE')) {
+            Copy-Item -LiteralPath $file -Destination $package
+          }
+          $provenance = "Repository: $env:GITHUB_REPOSITORY`nCommit: $env:GITHUB_SHA`nTarget: Windows x64`n"
+          [IO.File]::WriteAllText((Join-Path $package 'BUILD-INFO.txt'), $provenance, [Text.UTF8Encoding]::new($false))
+          $lines = foreach ($file in Get-ChildItem -LiteralPath $package -File | Sort-Object Name) {
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $hash + '  ' + $file.Name
+          }
+          [IO.File]::WriteAllLines((Join-Path $package 'SHA256SUMS.txt'), [string[]]$lines, [Text.UTF8Encoding]::new($false))
+      - name: Upload Windows package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: codex-quota-strip-windows-x64
+          path: build/package/
+          if-no-files-found: error
+          retention-days: 14
