@@ -6,7 +6,7 @@ Windows、Linux 和 macOS 上的轻量 Codex 配额工具，显示 **5 小时剩
 
 使用 C++17 和原生系统接口，不依赖 Electron 或 WebView。它是独立的辅助程序，与 OpenAI 没有官方隶属关系。三平台均可在设置中切换中文／English 并保存，立即生效；翻译在本机完成。英文说明见 [README.en.md](README.en.md)。
 
-**[下载 v3.0.0-preview.2](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.2)** · [Linux／macOS 安装与构建](docs/native-desktop.zh-CN.md)
+**[下载 v3.0.0-preview.3](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.3)** · [Linux／macOS 安装与构建](docs/native-desktop.zh-CN.md)
 
 下文的命令及详细配置主要针对 Windows；Linux／macOS 请使用上面的独立原生指南。
 

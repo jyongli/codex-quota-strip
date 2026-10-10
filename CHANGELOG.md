@@ -1,5 +1,12 @@
 # 变更记录 / Changelog
 
+## v3.0.0-preview.3 — 2026-10-10
+
+- 修复 Windows 语言下拉列表高度为零的问题，中文和 English 选项均可完整显示和点击。 / Fixed a zero-height Windows language dropdown so both Chinese and English are visible and selectable.
+- 修复显示位置下拉列表的选项裁切，并统一语言选择框的深色样式。 / Fixed clipped display-position options and applied the dark style to the language selector.
+- 回归测试实际展开列表、检查选项可见范围、点击 English 并验证即时翻译和保存。 / Regression tests open the real dropdown, check visible option bounds, click English, and verify live translation and persistence.
+- 三平台产物基于同一源码提交重新构建；Linux／macOS 应用行为与 preview.2 保持一致。 / All platform packages are rebuilt from the same source commit; Linux/macOS application behavior is unchanged from preview.2.
+
 ## v3.0.0-preview.2 — 2026-10-10
 
 - Windows／Linux／macOS 配置窗口加入中英文语言选择；保存后即时更新菜单、界面和状态提示，并持久化选择。 / Added persisted Chinese/English selection with live menu, UI and status translation on all three platforms.

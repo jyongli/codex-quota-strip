@@ -6,7 +6,7 @@ The native version uses C++17, GTK3/Ayatana indicators on Linux and AppKit on ma
 
 ## Downloads and platforms
 
-[Download the native preview](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.2)
+[Download the native preview](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.3)
 
 | Artifact | Environment |
 | --- | --- |

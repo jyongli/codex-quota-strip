@@ -6,7 +6,7 @@ A lightweight Windows, Linux and macOS utility displaying **remaining five-hour 
 
 Built with C++17 and native platform APIs, without Electron or WebView. This is an independent companion, not affiliated with OpenAI. All three platforms support Chinese/English switching in Settings; save and apply for immediate changes that persist across restarts. Translations are local. See [README.md](README.md) for the Chinese guide.
 
-**[Download v3.0.0-preview.2](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.2)** · [Linux/macOS installation and build guide](docs/native-desktop.en.md)
+**[Download v3.0.0-preview.3](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.3)** · [Linux/macOS installation and build guide](docs/native-desktop.en.md)
 
 Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 

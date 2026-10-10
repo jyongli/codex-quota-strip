@@ -6,7 +6,7 @@
 
 ## 下载与平台
 
-[下载原生预览版](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.2)
+[下载原生预览版](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.3)
 
 | 产物 | 适用环境 |
 | --- | --- |
