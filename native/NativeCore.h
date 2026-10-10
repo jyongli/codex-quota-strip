@@ -8,6 +8,7 @@
 #include <thread>
 
 namespace nativequota {
+class AuthWatcher;
 struct Preferences {
     int seconds = 120, staleMinutes = 5;
     bool online = true, onlyWithCodex = true, overlay = true, left = false;
@@ -58,11 +59,15 @@ class Engine {
     std::function<void()> changed_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
+    std::atomic<bool> queryCancelled_{false};
+    std::unique_ptr<AuthWatcher> authWatcher_;
+    std::string authIdentity_;
     bool requested_ = true, manual_ = false, hostAvailable_ = false;
     unsigned generation_ = 0;
     void run();
+    void checkAccount();
 public:
-    explicit Engine(Preferences settings) : preferences_(std::move(settings)) {}
+    explicit Engine(Preferences settings);
     ~Engine();
     Preferences preferences();
     State state();
