@@ -58,13 +58,10 @@ struct Child {
         if (pid <= 0) return;
         // posix_spawn 为子进程建立独立进程组，负 PID 只指向本次查询组。
         kill(-pid, SIGTERM);
-        int status = 0;
-        for (int i = 0; i < 20; ++i) {
-            pid_t ended = waitpid(pid, &status, WNOHANG);
-            if (ended == pid || (ended < 0 && errno == ECHILD)) { kill(-pid, SIGKILL); return; }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
+        // 先清理整组再回收根进程，避免根 PID 被复用后再按组发送信号。
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
         kill(-pid, SIGKILL);
+        int status = 0;
         while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
     }
 };
@@ -99,6 +96,9 @@ bool Valid(const Preferences& value) {
 }
 Preferences Load(const std::filesystem::path& file) {
     Preferences next = Defaults();
+    std::error_code sizeError;
+    auto size = std::filesystem::file_size(file, sizeError);
+    if (sizeError || size > 65536) return next;
     std::ifstream in(file); std::string line;
     try {
         while (std::getline(in, line)) {
@@ -154,7 +154,10 @@ std::string Remaining(quota::Window value, long long now) {
 }
 bool Stale(const State& state, const Preferences& value, long long now) { return !state.snapshot.observed || now - state.snapshot.observed >= value.staleMinutes * 60000LL; }
 std::string Summary(const State& state, const Preferences& value, long long now) { return "5h " + Remaining(state.snapshot.fiveHour, now) + "  W " + Remaining(state.snapshot.weekly, now) + (Stale(state, value, now) ? " *" : ""); }
-bool HostMatches(const std::string& identifier, const std::string& configured) { return !configured.empty() && Lower(identifier).find(Lower(configured)) != std::string::npos; }
+bool HostMatches(const std::string& identifier, const std::string& configured) {
+    auto name = Lower(identifier), expected = Lower(configured);
+    return !expected.empty() && (name.find(expected) != std::string::npos || (expected == "codex" && name.find("chatgpt") != std::string::npos));
+}
 Rect Placement(Rect host, bool left) {
     if (left) return {host.x + 6, host.y + std::max(40.0, (host.height - 112) / 2), std::min(70.0, std::max(40.0, host.width - 12)), std::min(112.0, std::max(28.0, host.height - 12))};
     double width = std::min(248.0, std::max(100.0, host.width - 16));
@@ -209,6 +212,7 @@ QueryResult Query(const std::string& binary, const std::string& home, const std:
             while (available()) {
                 size_t end;
                 while ((end = buffer.find('\n')) != std::string::npos) {
+                    if (end > 32768) { answer.error = "Codex response exceeded size limit"; return false; }
                     auto line = buffer.substr(0, end); buffer.erase(0, end + 1);
                     try {
                         auto json = quota::JsonParser(line).parse(); const auto& identity = json.get("id");
@@ -256,7 +260,8 @@ void Engine::run() {
         Preferences settings; unsigned generation;
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            wake_.wait_until(lock, nextDue, [&] { return stop_.load() || requested_; });
+            if (nextDue == std::chrono::steady_clock::time_point::max()) wake_.wait(lock, [&] { return stop_.load() || requested_; });
+            else wake_.wait_until(lock, nextDue, [&] { return stop_.load() || requested_; });
             if (stop_.load()) break;
             settings = preferences_; bool manual = manual_; requested_ = false; manual_ = false;
             if (!settings.online || (settings.onlyWithCodex && !hostAvailable_ && !manual)) { nextDue = std::chrono::steady_clock::time_point::max(); continue; }

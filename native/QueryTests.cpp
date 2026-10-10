@@ -23,6 +23,9 @@ int main(int argc, char** argv) {
         auto begin = std::chrono::steady_clock::now();
         require(!query("timeout", 100).ok, "Timeout must cancel child");
         require(std::chrono::steady_clock::now() - begin < std::chrono::seconds(2), "Timeout cleanup must be prompt");
+        std::thread trigger([&] { std::this_thread::sleep_for(std::chrono::milliseconds(50)); cancel = true; });
+        result = query("timeout", 1500); trigger.join();
+        require(!result.ok, "Cancellation during a live query must clean up its child");
         cancel = true;
         require(!query("success").ok, "Pre-cancelled query must not succeed");
         unsetenv("QUOTA_FAKE_MODE");
