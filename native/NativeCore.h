@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <memory>
 #include <thread>
 
 namespace nativequota {

@@ -53,7 +53,8 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
     (void)notification;
     configRoot = options.smoke ? std::filesystem::temp_directory_path() / ("quota-mac-smoke-" + std::to_string(getpid())) : ConfigDirectory();
-    singleton = std::make_unique<InstanceLock>(configRoot / (options.smoke ? "instance.lock" : "instance-" + std::to_string(std::hash<std::string>{}(options.preferences.home)) + ".lock"));
+    // 用户级实例锁独立于所选账号目录，设置切换后仍阻止重复启动。
+    singleton = std::make_unique<InstanceLock>(configRoot / "instance.lock");
     if (!singleton->acquired()) { [NSApp terminate:nil]; return; }
     engine = std::make_unique<Engine>(options.preferences);
     statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];

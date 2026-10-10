@@ -90,6 +90,10 @@ struct App {
                 }, this);
             }
         }
+        if (!x11) {
+            // Wayland 无法检测任意宿主窗口；托盘查询按间隔运行，不使用不可能满足的门控。
+            auto prefs = engine.preferences(); prefs.onlyWithCodex = false; prefs.overlay = false; engine.configure(prefs);
+        }
         engine.start([this] { g_idle_add(Update, this); }); paint(); position();
         g_unix_signal_add(SIGTERM, [](gpointer data) -> gboolean { auto& app = *static_cast<App*>(data); app.closing = true; gtk_main_quit(); return G_SOURCE_REMOVE; }, this);
         g_unix_signal_add(SIGINT, [](gpointer data) -> gboolean { auto& app = *static_cast<App*>(data); app.closing = true; gtk_main_quit(); return G_SOURCE_REMOVE; }, this);
@@ -162,7 +166,7 @@ struct App {
         gtk_label_set_text(GTK_LABEL(stripText), text.c_str());
         if (status) {
             std::string message = summary + "\n" + (state.refreshing ? "Refreshing…" : !state.error.empty() ? state.error : !prefs.online ? "Online queries disabled" : "Account quota");
-            if (!x11 && prefs.overlay) message += "\nWayland: window-following overlay is unavailable";
+            if (!x11) message += "\nWayland: overlay/host detection unavailable. Scheduling uses the interval.";
             gtk_label_set_text(GTK_LABEL(status), message.c_str());
         }
     }
@@ -186,6 +190,7 @@ struct App {
         auto field = [&](const char* label, GtkWidget* control) { auto title = gtk_label_new(label); gtk_label_set_xalign(GTK_LABEL(title), 0); gtk_grid_attach(GTK_GRID(grid), title, 0, row, 1, 1); gtk_widget_set_hexpand(control, TRUE); gtk_grid_attach(GTK_GRID(grid), control, 1, row++, 1, 1); return control; };
         auto check = [&](const char* label, bool enabled) { auto control = gtk_check_button_new_with_label(label); gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(control), enabled); gtk_grid_attach(GTK_GRID(grid), control, 0, row++, 2, 1); return control; };
         online = check("Query Codex account online", prefs.online); only = check("Query only while the host app is open", prefs.onlyWithCodex); show = check("Show window-following overlay (X11)", prefs.overlay);
+        gtk_widget_set_sensitive(only, x11); gtk_widget_set_sensitive(show, x11);
         seconds = field("Refresh interval (30–3600 s)", gtk_spin_button_new_with_range(30, 3600, 1)); gtk_spin_button_set_value(GTK_SPIN_BUTTON(seconds), prefs.seconds);
         stale = field("Stale after (1–120 min)", gtk_spin_button_new_with_range(1, 120, 1)); gtk_spin_button_set_value(GTK_SPIN_BUTTON(stale), prefs.staleMinutes);
         side = field("Overlay position", gtk_combo_box_text_new()); gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(side), "Top"); gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(side), "Left"); gtk_combo_box_set_active(GTK_COMBO_BOX(side), prefs.left ? 1 : 0);
@@ -224,8 +229,9 @@ int main(int argc, char** argv) {
         auto options = ParseOptions(argc, argv);
         if (!gtk_init_check(nullptr, nullptr)) { std::cerr << "A graphical Linux session is required\n"; return 2; }
         g_object_set(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", TRUE, nullptr);
-        App app(options); auto hash = std::hash<std::string>{}(options.preferences.home);
-        InstanceLock singleton(app.configRoot / (options.smoke ? "instance.lock" : "instance-" + std::to_string(hash) + ".lock")); if (!singleton.acquired()) return 0;
+        App app(options);
+        // 原生版在用户配置目录内保持一个实例，切换账号目录不会改变锁身份。
+        InstanceLock singleton(app.configRoot / "instance.lock"); if (!singleton.acquired()) return 0;
         app.initialize(); gtk_main(); return options.smoke && !app.testPassed ? 1 : 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
