@@ -8,8 +8,10 @@ $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudi
 if (-not $installation) { throw 'Microsoft C++ Build Tools are required to rebuild; the delivered EXE needs no compiler.' }
 $vc = Get-ChildItem -LiteralPath (Join-Path $installation 'VC\Tools\MSVC') -Directory | Sort-Object Name -Descending | Select-Object -First 1
 $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
-$sdk = Get-ChildItem -LiteralPath (Join-Path $kits 'Lib') -Directory | Sort-Object Name -Descending | Select-Object -First 1
+. (Join-Path $PSScriptRoot 'BuildSdk.ps1')
+$sdk = Find-QuotaWindowsSdk -KitsPath $kits
 $sdkIncludes = Join-Path $kits ('Include\' + $sdk.Name)
+Write-Output ('Windows SDK: ' + $sdk.Name)
 $env:INCLUDE = (@((Join-Path $vc.FullName 'include')) + @('ucrt','um','shared','winrt').ForEach({ Join-Path $sdkIncludes $_ })) -join ';'
 $env:LIB = @((Join-Path $vc.FullName 'lib\x64'),(Join-Path $sdk.FullName 'ucrt\x64'),(Join-Path $sdk.FullName 'um\x64')) -join ';'
 $compiler = Join-Path $vc.FullName 'bin\Hostx64\x64\cl.exe'
