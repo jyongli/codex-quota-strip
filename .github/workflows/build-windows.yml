@@ -38,7 +38,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           XDG_SESSION_TYPE: x11
-        run: xvfb-run -a dbus-run-session -- ./build/native/CodexQuotaStrip --smoke-test
+        run: xvfb-run -a dbus-run-session -- ./build/native/CodexQuotaStrip --smoke-test | tee build/native/ui-smoke.txt
       - name: Verify Wayland capability policy
         if: runner.os == 'Linux'
         env:
@@ -49,7 +49,7 @@ jobs:
         run: xvfb-run -a dbus-run-session -- bash native/SingleInstanceTest.sh ./build/native/CodexQuotaStrip
       - name: Verify macOS menu bar and native UI
         if: runner.os == 'macOS'
-        run: ./build/native/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip --smoke-test
+        run: ./build/native/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip --smoke-test | tee build/native/ui-smoke.txt
       - name: Verify macOS single instance across account homes
         if: runner.os == 'macOS'
         run: bash native/SingleInstanceTest.sh ./build/native/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip
@@ -64,6 +64,7 @@ jobs:
             cp CodexQuotaStrip-macos-universal.zip artifact/
           fi
           cp ../../LICENSE artifact/
+          cp ui-smoke.txt artifact/
           printf 'Repository: %s\nCommit: %s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" > artifact/BUILD-INFO.txt
           cd artifact
           if [ "${{ runner.os }}" = "Linux" ]; then

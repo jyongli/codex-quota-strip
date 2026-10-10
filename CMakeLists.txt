@@ -27,6 +27,11 @@ if(APPLE)
   target_compile_options(CodexQuotaStrip PRIVATE -fobjc-arc)
   target_link_libraries(CodexQuotaStrip PRIVATE native-core "-framework AppKit" "-framework ApplicationServices")
   set_target_properties(CodexQuotaStrip PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/native/Info.plist.in")
+  # 预览包使用 ad-hoc 完整性签名；没有 Apple Developer ID，也没有公证。
+  add_custom_command(TARGET CodexQuotaStrip POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:CodexQuotaStrip>/Contents/Resources"
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE" "$<TARGET_BUNDLE_DIR:CodexQuotaStrip>/Contents/Resources/LICENSE"
+    COMMAND /usr/bin/codesign --force --sign - --identifier io.github.jyongli.codex-quota-strip "$<TARGET_BUNDLE_DIR:CodexQuotaStrip>")
   install(TARGETS CodexQuotaStrip BUNDLE DESTINATION .)
   install(FILES LICENSE DESTINATION CodexQuotaStrip.app/Contents/Resources)
   set(CPACK_GENERATOR ZIP)
@@ -43,6 +48,7 @@ else()
   set(CPACK_GENERATOR "DEB;TGZ")
   set(CPACK_PACKAGE_FILE_NAME "CodexQuotaStrip-linux-x86_64")
   set(CPACK_DEBIAN_PACKAGE_NAME codex-quota-strip)
+  set(CPACK_DEBIAN_PACKAGE_VERSION "3.0.0~preview1")
   set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE amd64)
   set(CPACK_DEBIAN_PACKAGE_DEPENDS "libgtk-3-0, libayatana-appindicator3-1, libx11-6, libstdc++6, libc6 (>= 2.35)")
   set(CPACK_DEBIAN_PACKAGE_MAINTAINER "jyongli <49582085+jyongli@users.noreply.github.com>")

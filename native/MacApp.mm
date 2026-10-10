@@ -3,6 +3,7 @@
 #include "NativeCore.h"
 #include <unistd.h>
 #include <signal.h>
+#include <sys/resource.h>
 #include <iostream>
 #include <memory>
 
@@ -93,7 +94,14 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
         BOOL passed = statusItem.button != nil && config.isVisible && engine->preferences().seconds == 45 && stored.seconds == 45 && !strip.canBecomeKeyWindow;
         [strip orderOut:nil]; self.smokePassed = passed && !strip.isVisible;
         std::cout << (self.smokePassed ? "PASS: macOS menu bar, native settings persistence, passive overlay and hide lifecycle\n" : "FAIL: macOS native UI smoke test\n");
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ [weak quit:nil]; });
+        [config close];
+        rusage before{}; getrusage(RUSAGE_SELF, &before);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            rusage after{}; getrusage(RUSAGE_SELF, &after);
+            auto cpu = [](const rusage& value) { return value.ru_utime.tv_sec + value.ru_stime.tv_sec + (value.ru_utime.tv_usec + value.ru_stime.tv_usec) / 1000000.0; };
+            std::cout << "{\"idle_seconds\":2,\"idle_cpu_seconds\":" << cpu(after) - cpu(before) << ",\"peak_rss_mib\":" << after.ru_maxrss / (1024.0 * 1024.0) << "}\n";
+            [weak quit:nil];
+        });
     }
 }
 - (void)clearObserver {

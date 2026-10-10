@@ -217,7 +217,21 @@ struct App {
             case 2: if (gtk_widget_get_visible(app.strip)) return fail("Other foreground application must hide overlay"); app.activate(app.testHost); break;
             case 3: if (!gtk_widget_get_visible(app.strip)) return fail("Returning to host must restore overlay"); app.openSettings(); gtk_spin_button_set_value(GTK_SPIN_BUTTON(app.seconds), 45); Apply(nullptr, &app); break;
             case 4: if (app.engine.preferences().seconds != 45 || Load(app.configRoot / "settings.ini").seconds != 45) return fail("Native settings must apply and persist"); XDestroyWindow(app.display, app.testHost); app.activate(0); break;
-            case 5: if (gtk_widget_get_visible(app.strip)) return fail("Closed host must hide overlay"); app.testPassed = true; std::cout << "PASS: Linux tray/settings, X11 focus hiding, move-following, restore and host exit\n"; app.closing = true; gtk_main_quit(); return G_SOURCE_REMOVE;
+            case 5: {
+                if (gtk_widget_get_visible(app.strip)) return fail("Closed host must hide overlay");
+                app.testPassed = true; std::cout << "PASS: Linux tray/settings, X11 focus hiding, move-following, restore and host exit\n";
+                if (app.config) gtk_widget_destroy(app.config);
+                auto usage = std::make_shared<rusage>(); getrusage(RUSAGE_SELF, usage.get());
+                auto measurement = new std::pair<App*, std::shared_ptr<rusage>>(&app, usage);
+                g_timeout_add(2000, [](gpointer data) -> gboolean {
+                    std::unique_ptr<std::pair<App*, std::shared_ptr<rusage>>> measurement(static_cast<std::pair<App*, std::shared_ptr<rusage>>*>(data));
+                    rusage after{}; getrusage(RUSAGE_SELF, &after);
+                    auto cpu = [](const rusage& value) { return value.ru_utime.tv_sec + value.ru_stime.tv_sec + (value.ru_utime.tv_usec + value.ru_stime.tv_usec) / 1000000.0; };
+                    std::cout << "{\"idle_seconds\":2,\"idle_cpu_seconds\":" << cpu(after) - cpu(*measurement->second) << ",\"peak_rss_mib\":" << after.ru_maxrss / 1024.0 << "}\n";
+                    measurement->first->closing = true; gtk_main_quit(); return G_SOURCE_REMOVE;
+                }, measurement);
+                return G_SOURCE_REMOVE;
+            }
             }
             return G_SOURCE_CONTINUE;
         }, this);
