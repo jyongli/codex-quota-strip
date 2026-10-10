@@ -1,0 +1,21 @@
+# 编译输出和本地测试数据
+/build/
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.exp
+**/fixtures/
+**/*-fixtures/
+# 本机凭据、配置和诊断文件不进入仓库
+.env
+.env.*
+auth.json
+settings.ini
+status.json
+*.log
+*.jsonl
+*.bak
+.vs/
+.vscode/
