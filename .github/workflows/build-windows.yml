@@ -8,6 +8,22 @@ permissions:
   contents: read
 
 jobs:
+  native-baseline:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compile and test portable quota core
+        run: |
+          mkdir -p build
+          c++ -std=c++17 -O2 native/CoreTests.cpp -o build/core-tests
+          ./build/core-tests
   build:
     runs-on: windows-2022
     timeout-minutes: 15
