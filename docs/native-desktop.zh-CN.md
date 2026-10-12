@@ -6,7 +6,7 @@
 
 ## 下载与平台
 
-[下载原生预览版](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.3)
+[下载原生预览版](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.4)
 
 | 产物 | 适用环境 |
 | --- | --- |
@@ -64,6 +64,8 @@ codex --version
 ```
 
 Codex CLI 的安装和登录方式见 [官方说明](https://learn.chatgpt.com/docs/codex/cli)。如果使用自定义 `CODEX_HOME`，辅助程序必须选择相同数据目录。
+
+账号查询自动复用所选 `config.toml` 中 `[shell_environment_policy.set]` 的四项代理变量，支持配置文件选定的 profile。更改后在下次查询生效，不需重启；未配置项继承启动环境。读取范围、示例及错误处理见 [代理说明](../README.md#d-代理与受限网络)。
 
 ## 配置与命令
 

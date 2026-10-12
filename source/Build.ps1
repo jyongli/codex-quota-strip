@@ -1,4 +1,4 @@
-param([switch]$Tests, [switch]$UiProbe, [switch]$VisibilityTests, [switch]$TrayIconTests, [switch]$LayerTests, [ValidateSet('SettingsTests','ConfigUiTests','LifecycleTests','WeeklyDisplayTests','ProviderProbe')][string]$Extra, [string]$OutputDirectory = $PSScriptRoot)
+param([switch]$Tests, [switch]$UiProbe, [switch]$VisibilityTests, [switch]$TrayIconTests, [switch]$LayerTests, [ValidateSet('SettingsTests','ConfigUiTests','LifecycleTests','WeeklyDisplayTests','ProviderProbe','ProviderEnvironmentTests','ProxyConfigTests')][string]$Extra, [string]$OutputDirectory = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) { throw 'Visual Studio Installer / vswhere was not found. Install Visual Studio 2022 C++ Build Tools and a Windows SDK.' }
@@ -22,7 +22,7 @@ try {
     $target = if ($Tests) { 'QuotaTests.exe' } elseif ($UiProbe) { 'UiProbe.exe' } elseif ($VisibilityTests) { 'VisibilityTests.exe' } elseif ($TrayIconTests) { 'TrayIconTests.exe' } elseif ($LayerTests) { 'LayerTests.exe' } else { 'CodexQuotaStrip.exe' }
     if ($Extra) { $source = $Extra + '.cpp'; $target = $Extra + '.exe' }
     $arguments = @('/nologo','/std:c++17','/EHsc','/W4','/utf-8','/O2','/MT','/DUNICODE','/D_UNICODE','/D_CRT_SECURE_NO_WARNINGS',('/Fe:' + (Join-Path $OutputDirectory $target)),(Join-Path $PSScriptRoot $source))
-    if($source -in @('QuotaStrip.cpp','ProviderProbe.cpp')){$arguments+=(Join-Path $PSScriptRoot 'QuotaProvider.cpp')}
+    if($source -in @('QuotaStrip.cpp','ProviderProbe.cpp','ProviderEnvironmentTests.cpp')){$arguments+=(Join-Path $PSScriptRoot 'QuotaProvider.cpp')}
     if ($UiProbe -or $VisibilityTests -or $TrayIconTests -or $LayerTests -or $Extra) { $arguments += @('/link','user32.lib','gdi32.lib','shell32.lib','dwmapi.lib') }
     elseif (-not $Tests) { $arguments += @('/link','/SUBSYSTEM:WINDOWS','user32.lib','gdi32.lib','comctl32.lib','shell32.lib','advapi32.lib','dwmapi.lib','imm32.lib','uxtheme.lib') }
     & $compiler @arguments

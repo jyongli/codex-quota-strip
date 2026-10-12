@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('App','QuotaTests','SettingsTests','TrayIconTests','LifecycleTests','ConfigUiTests','WeeklyDisplayTests','UiProbe','LayerTests','VisibilityTests','ProviderProbe')]
+    [ValidateSet('App','QuotaTests','SettingsTests','TrayIconTests','LifecycleTests','ConfigUiTests','WeeklyDisplayTests','UiProbe','LayerTests','VisibilityTests','ProviderProbe','ProviderEnvironmentTests','ProxyConfigTests')]
     [string]$Target = 'App',
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'build')
 )
@@ -19,4 +19,5 @@ switch ($Target) {
 & (Join-Path $PSScriptRoot 'source\Build.ps1') @selection -OutputDirectory $OutputDirectory
 if ($Target -eq 'App') {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'source\Start-With-Codex.ps1') -Destination $OutputDirectory
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'THIRD_PARTY_NOTICES.md') -Destination $OutputDirectory
 }

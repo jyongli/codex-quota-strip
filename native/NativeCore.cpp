@@ -1,4 +1,5 @@
 #include "NativeCore.h"
+#include "../source/ProxyConfig.h"
 #include <spawn.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -259,6 +260,8 @@ QueryResult Query(const std::string& binary, const std::string& home, const std:
     static std::once_flag ignoredPipe;
     std::call_once(ignoredPipe, [] { signal(SIGPIPE, SIG_IGN); });
     try {
+        quota::ProxySettings proxy;
+        if(!quota::LoadCodexProxy(std::filesystem::path(home),proxy)){answer.error="Invalid Codex proxy configuration; check config.toml";return answer;}
         auto input = Pipe(), output = Pipe(); SpawnSetup setup;
         if (posix_spawn_file_actions_init(&setup.files)) throw std::runtime_error("spawn"); setup.hasFiles = true;
         if (posix_spawnattr_init(&setup.attributes)) throw std::runtime_error("spawn"); setup.hasAttributes = true;
@@ -268,8 +271,13 @@ QueryResult Query(const std::string& binary, const std::string& home, const std:
         if (posix_spawn_file_actions_addopen(&setup.files, STDERR_FILENO, "/dev/null", O_WRONLY, 0)) throw std::runtime_error("spawn");
         for (int fd : {input.first.value, input.second.value, output.first.value, output.second.value}) if (posix_spawn_file_actions_addclose(&setup.files, fd)) throw std::runtime_error("spawn");
         std::vector<std::string> environment;
-        for (char** entry = environ; entry && *entry; ++entry) if (strncmp(*entry, "CODEX_HOME=", 11) != 0) environment.emplace_back(*entry);
+        for (char** entry = environ; entry && *entry; ++entry){
+            std::string value(*entry);const auto equal=value.find('=');const auto key=quota::ProxyKey(value.substr(0,equal));
+            if(strncmp(*entry,"CODEX_HOME=",11)!=0&&proxy.find(key)==proxy.end())environment.push_back(std::move(value));
+        }
         environment.push_back("CODEX_HOME=" + home);
+        // POSIX 代理消费者对大小写的偏好不同，统一写入两个别名并清除冲突旧值。
+        for(const auto& item:proxy)if(!item.second.empty()){environment.push_back(item.first+"="+item.second);environment.push_back(Lower(item.first)+"="+item.second);}
         std::vector<char*> env; for (auto& entry : environment) env.push_back(entry.data()); env.push_back(nullptr);
         std::string command = "app-server"; char* arguments[] = {const_cast<char*>(binary.c_str()), command.data(), nullptr};
         Child child;

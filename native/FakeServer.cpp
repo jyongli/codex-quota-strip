@@ -5,6 +5,15 @@
 #include <signal.h>
 int main() {
     const std::string mode = std::getenv("QUOTA_FAKE_MODE") ? std::getenv("QUOTA_FAKE_MODE") : "success";
+    if(mode=="proxy"){
+        // 配置代理必须覆盖两个大小写别名；不通过输出回传任何真实环境变量。
+        for(auto name:{"HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY","http_proxy","https_proxy","all_proxy","no_proxy"}){
+            std::string key(name);for(char& c:key)if(c>='a'&&c<='z')c=static_cast<char>(c-'a'+'A');
+            auto expected=std::getenv(("QUOTA_EXPECT_"+key).c_str()),actual=std::getenv(name);
+            if(std::string(expected?expected:"")!=std::string(actual?actual:""))return 12;
+        }
+        if(std::getenv("QUOTA_CONFIG_SECRET"))return 13;
+    }
     if (mode == "exit") return 0;
     if (mode == "timeout") { sleep(60); return 0; }
     std::string line;

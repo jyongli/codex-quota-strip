@@ -71,6 +71,7 @@ jobs:
             lipo package-check/CodexQuotaStrip-macos-universal/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip -verify_arch arm64 x86_64
           fi
           cp ../../LICENSE artifact/
+          cp ../../THIRD_PARTY_NOTICES.md artifact/
           cp ui-smoke.txt artifact/
           printf 'Repository: %s\nCommit: %s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" > artifact/BUILD-INFO.txt
           cd artifact
@@ -107,7 +108,7 @@ jobs:
           $package = Join-Path $PWD 'build/package'
           New-Item -ItemType Directory -Path $package -Force | Out-Null
           # 只打包明确列出的公开文件，避免混入测试数据和本机配置。
-          foreach ($file in @('build/CodexQuotaStrip.exe', 'build/Start-With-Codex.ps1', 'LICENSE')) {
+          foreach ($file in @('build/CodexQuotaStrip.exe', 'build/Start-With-Codex.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) {
             Copy-Item -LiteralPath $file -Destination $package
           }
           $provenance = "Repository: $env:GITHUB_REPOSITORY`nCommit: $env:GITHUB_SHA`nTarget: Windows x64`n"

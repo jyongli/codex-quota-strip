@@ -8,7 +8,7 @@ It is intended for Codex desktop or CLI users who want visible quota values and 
 
 Built with C++17 and native platform interfaces, without Electron or WebView. Chinese/English can be selected in Settings and applied immediately. This is an independently running companion, not affiliated with OpenAI. See [README.md](README.md) for the Chinese guide.
 
-**[Download v3.0.0-preview.3](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.3)** · [Linux/macOS installation and build guide](docs/native-desktop.en.md)
+**[Download v3.0.0-preview.4](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.4)** · [Linux/macOS installation and build guide](docs/native-desktop.en.md)
 
 Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 
@@ -26,6 +26,7 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 | Chinese and English UI | Choose Chinese or English in Settings. Saving immediately updates labels, menus and status messages; the choice survives restart. |
 | Native settings window | Set the refresh interval, stale threshold, query conditions and display position through a GUI. Windows uses a native dark style; Linux/macOS use their platform interfaces. |
 | Local account and settings | Queries use the signed-in local Codex and selected data directory. Settings stay on the computer; authentication changes clear the previous account snapshot. |
+| Reuse Codex proxy settings | Queries read Codex proxy environment settings automatically, without configuring a separate endpoint in the companion. |
 | Single instance and cleanup | Repeated launches reuse an instance. Query subprocesses are cleaned up on completion, timeout or app exit. Windows identifies instances by Codex data directory; Linux/macOS use the user configuration directory. |
 
 ### Understanding values and refresh
@@ -176,7 +177,21 @@ $env:CODEX_HOME = 'D:\CodexData\account-a'
 
 ### Proxies and restricted networks
 
-Query subprocesses inherit the companion's launch environment. This configures the current session only; replace the example address/port with your working HTTP proxy.
+Before each query, the companion reads `config.toml` in the selected Codex data directory and reuses `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` from `[shell_environment_policy.set]`, including lowercase aliases. The `profile` selected in that file overrides matching global proxies. Unconfigured variables retain the launch environment; an empty string removes the inherited variable.
+
+Existing Codex configuration such as this is reused directly. Add variables to the existing table rather than declaring it twice; replace the example address and port.
+
+```toml
+[shell_environment_policy.set]
+HTTP_PROXY = "http://127.0.0.1:7890"
+HTTPS_PROXY = "http://127.0.0.1:7890"
+ALL_PROXY = "http://127.0.0.1:7890"
+NO_PROXY = "localhost,127.0.0.1,::1"
+```
+
+Changes apply on Refresh now or the next query without restarting the companion. Proxies are applied only to query children; other configured secrets are excluded. Neither system proxies nor Codex configuration are changed. Invalid TOML, conflicting case aliases, configurations over 512 KiB or variables over 4096 bytes stop the query with a fixed error that excludes passwords.
+
+Discovery is limited to the selected `CODEX_HOME` user configuration and its selected profile. Project configuration, launch scripts and other processes' environments are not read. Desktop `--proxy-server` arguments and sandbox proxy listeners are not imported; put the actual proxy in the table above or use launch-environment fallback:
 
 ```powershell
 $env:HTTPS_PROXY = 'http://127.0.0.1:7890'
@@ -184,7 +199,7 @@ $env:HTTP_PROXY = $env:HTTPS_PROXY
 .\build\CodexQuotaStrip.exe --settings
 ```
 
-Whether these variables are honored depends on the discovered Codex version and network configuration. The companion does not configure the system proxy. Restart from this terminal after changes; existing instances do not inherit new variables.
+Matching Codex configuration proxies take precedence over launch variables; supported protocols depend on Codex CLI. If you change only launch environment variables, restart the companion from that terminal; existing instances do not inherit new variables.
 
 ### Local-event mode
 

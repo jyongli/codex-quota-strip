@@ -6,7 +6,7 @@ The native version uses C++17, GTK3/Ayatana indicators on Linux and AppKit on ma
 
 ## Downloads and platforms
 
-[Download the native preview](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.3)
+[Download the native preview](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.4)
 
 | Artifact | Environment |
 | --- | --- |
@@ -64,6 +64,8 @@ codex --version
 ```
 
 See the [official CLI guide](https://learn.chatgpt.com/docs/codex/cli) for installation/sign-in. Select the same data directory if you use a custom `CODEX_HOME`.
+
+Account queries reuse the four proxy variables in `[shell_environment_policy.set]` from the selected `config.toml`, including its selected profile. Changes apply at the next query without restarting; unconfigured variables inherit the launch environment. See [proxy configuration](../README.en.md#proxies-and-restricted-networks) for scope, examples and error handling.
 
 ## Settings and commands
 

@@ -34,6 +34,7 @@ inline const wchar_t* Translate(const wchar_t* chinese, bool english) {
         {L"Codex app-server 响应超出限制",L"Codex response exceeded size limit"},{L"Codex app-server 初始化失败",L"Codex initialization failed"},
         {L"读取 Codex 额度失败",L"Codex account query failed"},{L"Codex app-server 响应无效",L"Invalid Codex response"},{L"Codex app-server 配置不可用",L"Codex executable or data directory unavailable"},
         {L"无法创建 Codex app-server 通信通道",L"Cannot create Codex communication pipes"},{L"无法准备 Codex app-server 环境",L"Cannot prepare Codex environment"},
+        {L"Codex 代理配置无效，请检查 config.toml",L"Invalid Codex proxy configuration; check config.toml"},
         {L"无法启动 Codex app-server",L"Cannot start Codex app-server"},{L"无法与 Codex app-server 通信",L"Cannot communicate with Codex"},
         {L"Codex app-server 未返回额度数据",L"Codex returned no quota data"},{L"读取 Codex 额度时发生错误",L"Codex query failed"},
         {L"账户刷新异常，请重启配额程序",L"Account refresh failed; restart the companion"}

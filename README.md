@@ -8,7 +8,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 
 程序使用 C++17 和原生系统界面，不依赖 Electron 或 WebView。中文／English 可在设置中切换并保存，立即生效。它是独立运行的辅助程序，与 OpenAI 没有官方隶属关系。英文说明见 [README.en.md](README.en.md)。
 
-**[下载 v3.0.0-preview.3](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.3)** · [Linux／macOS 安装与构建](docs/native-desktop.zh-CN.md)
+**[下载 v3.0.0-preview.4](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.4)** · [Linux／macOS 安装与构建](docs/native-desktop.zh-CN.md)
 
 下文的命令及详细配置主要针对 Windows；Linux／macOS 请使用上面的独立原生指南。
 
@@ -26,6 +26,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 | 中英文界面 | 设置中选择“中文”或“English”，保存后即时更新界面、菜单和状态提示，重启后保留选择。 |
 | 原生配置窗口 | 图形界面设置刷新间隔、旧数据提示、查询条件和显示位置；Windows 提供原生深色样式，Linux／macOS 使用各自系统界面。 |
 | 本机账号与设置 | 使用已登录的本机 Codex 和指定的数据目录查询；设置保存在本机，认证信息变化时清除旧账号快照。 |
+| 自动复用 Codex 代理 | 查询前读取 Codex 的代理环境配置，无需给配额程序另填代理节点。 |
 | 单实例与退出清理 | 重复启动复用已有实例；查询子进程在完成、超时或程序退出时清理。Windows 按 Codex 数据目录区分实例，Linux／macOS 按用户配置目录区分。 |
 
 ### 显示与刷新说明
@@ -176,7 +177,21 @@ $env:CODEX_HOME = 'D:\CodexData\account-a'
 
 ### D. 代理与受限网络
 
-查询子进程继承辅助程序启动时的环境。以下仅设置当前会话；端口为示例，需替换为实际可用的 HTTP 代理。
+查询前自动读取所选 Codex 数据目录的 `config.toml`，复用 `[shell_environment_policy.set]` 中的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`（支持小写别名）。配置文件通过 `profile` 选定的配置覆盖全局同名代理；未配置项继承配额程序启动环境，空字符串移除对应继承变量。
+
+Codex 已配置以下内容时，配额程序直接复用。将变量加入已有表，避免重复定义；地址和端口为示例。
+
+```toml
+[shell_environment_policy.set]
+HTTP_PROXY = "http://127.0.0.1:7890"
+HTTPS_PROXY = "http://127.0.0.1:7890"
+ALL_PROXY = "http://127.0.0.1:7890"
+NO_PROXY = "localhost,127.0.0.1,::1"
+```
+
+修改后点击“立即刷新”或等待下次查询即可生效，无需重启配额程序。代理只应用到查询子进程，不注入其他配置密钥，不修改系统代理或 Codex 配置。无效 TOML、冲突的大小写别名、超过 512 KiB 的配置或超过 4096 字节的变量会停止本次查询并给出不含密码的固定提示。
+
+读取范围仅为所选 `CODEX_HOME` 的用户配置及其选定 profile，不读取工程配置、启动脚本或其他进程环境。桌面启动参数 `--proxy-server` 和沙盒代理监听地址不在读取范围内；这类环境可将实际代理加入上述配置，或使用以下启动环境回退方式：
 
 ```powershell
 $env:HTTPS_PROXY = 'http://127.0.0.1:7890'
@@ -184,7 +199,7 @@ $env:HTTP_PROXY = $env:HTTPS_PROXY
 .\build\CodexQuotaStrip.exe --settings
 ```
 
-变量是否生效取决于所发现的 Codex 版本和网络配置；程序不设置系统代理。修改变量后需从该终端重新启动，已有实例不会继承新环境。
+Codex 配置的同名代理优先于启动环境变量，支持的协议由 Codex CLI 决定。若仅修改启动环境变量，需从该终端重新启动配额程序，已有实例不会继承新环境。
 
 ### E. 本地事件模式
 

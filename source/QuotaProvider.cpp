@@ -14,6 +14,7 @@
 
 #include "QuotaFiles.h"
 #include "QuotaProvider.h"
+#include "ProxyConfig.h"
 
 namespace quota {
 namespace {
@@ -89,18 +90,27 @@ bool IsHomeKey(const std::wstring& entry) {
         _wcsicmp(entry.substr(0, equal).c_str(), L"CODEX_HOME") == 0;
 }
 
-// 只覆写本次子进程的 CODEX_HOME，其他变量（包括代理配置）沿用父进程。
-bool MakeEnvironment(const std::wstring& home, std::vector<wchar_t>& block) {
+// 仅修改查询子进程环境；Codex 配置优先于父进程同名代理，未配置项保持继承。
+bool MakeEnvironment(const std::wstring& home, const ProxySettings& proxy, std::vector<wchar_t>& block) {
     LPWCH inherited = GetEnvironmentStringsW();
     if (!inherited) return false;
     std::vector<std::wstring> entries;
     for (const wchar_t* item = inherited; *item; item += std::wcslen(item) + 1) {
         std::wstring entry(item);
-        if (!IsHomeKey(entry)) entries.push_back(std::move(entry));
+        bool configuredProxy=false;
+        for(const auto& configured:proxy){std::wstring key(configured.first.begin(),configured.first.end());if(entry.size()>key.size()&&entry[key.size()]==L'='&&_wcsnicmp(entry.c_str(),key.c_str(),key.size())==0){configuredProxy=true;break;}}
+        if (!IsHomeKey(entry)&&!configuredProxy) entries.push_back(std::move(entry));
     }
     FreeEnvironmentStringsW(inherited);
 
     entries.push_back(L"CODEX_HOME=" + home);
+    for(const auto& item:proxy){
+        // 空字符串表示移除继承变量；UTF-8 配置值转为 Windows Unicode 环境。
+        if(item.second.empty())continue;
+        int count=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,item.second.data(),static_cast<int>(item.second.size()),nullptr,0);if(!count)return false;
+        std::wstring value(static_cast<size_t>(count),L'\0');if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,item.second.data(),static_cast<int>(item.second.size()),value.data(),count))return false;
+        entries.push_back(std::wstring(item.first.begin(),item.first.end())+L"="+value);
+    }
     std::sort(entries.begin(), entries.end(), [](const std::wstring& a, const std::wstring& b) {
         return _wcsicmp(a.c_str(), b.c_str()) < 0;
     });
@@ -437,6 +447,8 @@ ProviderResult ReadAccountQuota(const std::wstring& exe, const std::wstring& hom
     try {
         if (exe.empty() || home.empty()) return finish(L"Codex app-server 配置不可用");
         if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return finish(L"额度读取已取消");
+        ProxySettings proxy;
+        if(!LoadCodexProxy(std::filesystem::path(home),proxy))return finish(L"Codex 代理配置无效，请检查 config.toml");
         const ULONGLONG deadline = started + timeoutMs;
 
         SECURITY_ATTRIBUTES security{};
@@ -456,7 +468,7 @@ ProviderResult ReadAccountQuota(const std::wstring& exe, const std::wstring& hom
         if (!nullError.valid()) return finish(L"无法创建 Codex app-server 通信通道");
 
         std::vector<wchar_t> environment;
-        if (!MakeEnvironment(home, environment)) return finish(L"无法准备 Codex app-server 环境");
+        if (!MakeEnvironment(home, proxy, environment)) return finish(L"无法准备 Codex app-server 环境");
         AttributeList attributes;
         if (!attributes.initialize()) return finish(L"无法准备 Codex app-server 环境");
         HANDLE inheritedHandles[] = { inputRead.get(), outputWrite.get(), nullError.get() };

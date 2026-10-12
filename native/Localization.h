@@ -23,6 +23,7 @@ inline const char* Translate(const char* english, bool chinese) {
         {"Enter valid whole-number intervals.","请输入有效的整数间隔。"},{"Codex five-hour remaining quota","Codex 5 小时剩余额度"},{"Codex weekly remaining quota","Codex 周剩余额度"},
         {"Query cancelled","查询已取消"},{"Codex executable not found; set its path in Settings","未找到 Codex，请在设置中指定路径"},
         {"Cannot start Codex app-server","无法启动 Codex app-server"},{"Codex account query failed","Codex 账号查询失败"},
+        {"Invalid Codex proxy configuration; check config.toml","Codex 代理配置无效，请检查 config.toml"},
         {"Codex response exceeded size limit","Codex 响应超出大小限制"},{"Codex app-server exited","Codex app-server 已退出"},
         {"Codex query timed out","Codex 查询超时"},{"Cannot communicate with Codex","无法与 Codex 通信"},
         {"Cannot read Codex account quota","无法读取 Codex 账号额度"},{"Codex returned no supported quota windows","Codex 未返回支持的额度窗口"},

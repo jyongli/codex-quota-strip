@@ -24,6 +24,8 @@ Windows reads session logs for quota events; native previews use online queries 
 
 ## 构建产物 / Build artifacts
 
+账号查询会从所选 Codex `config.toml` 解析代理，只将四项代理变量注入查询子进程；不会注入其他配置密钥。配置错误提示不回显代理 URL／密码，配置和代理凭据不写入公开构建信息。 / Queries parse proxies from the selected Codex config.toml and inject only the four proxy variables into the child, excluding other configured secrets. Errors do not echo proxy URLs/passwords; configurations and proxy credentials are excluded from public build information.
+
 GitHub Actions 生成 Windows、Linux x64 和 macOS 通用产物，包含许可证和 SHA-256 清单。Windows／Linux 无发布者签名；macOS 只有 ad-hoc 完整性签名，没有 Apple Developer ID 或公证。校验清单用于检测下载或传输差异，不等于独立的发布者签名验证。
 
 GitHub Actions produces Windows, Linux x64 and universal macOS artifacts with license/checksums. Windows/Linux lack publisher signatures; macOS has only an ad-hoc integrity signature, without Apple Developer ID or notarization. Checksums detect transfer differences but do not independently verify publisher identity.

@@ -1,5 +1,12 @@
 # 变更记录 / Changelog
 
+## v3.0.0-preview.4 — 2026-10-12
+
+- 三平台账号查询自动读取所选 Codex `config.toml` 的代理环境变量和文件选定的 profile，下一次查询应用修改。 / All platforms reuse proxy environment variables and the file-selected profile from the chosen Codex config.toml; changes apply on the next query.
+- 代理仅作用到查询子进程，未配置项保留启动环境；支持大小写别名及空值清除，不注入其他配置密钥。 / Proxies affect query children only; unconfigured entries retain launch variables. Supports case aliases and explicit clearing, excluding unrelated configured secrets.
+- 新增真实子进程环境、配置变更、profile、无效配置和大小限制回归测试。 / Added regression coverage for real child environments, config updates, profiles, invalid config and size limits.
+- 内置 MIT 许可 toml++ v3.4.0 解析器，发布包附第三方许可，不增加常驻进程或刷新定时器。 / Includes the MIT-licensed toml++ v3.4.0 parser and third-party notices, without additional resident processes or refresh timers.
+
 ## v3.0.0-preview.3 — 2026-10-10
 
 - 修复 Windows 语言下拉列表高度为零的问题，中文和 English 选项均可完整显示和点击。 / Fixed a zero-height Windows language dropdown so both Chinese and English are visible and selectable.

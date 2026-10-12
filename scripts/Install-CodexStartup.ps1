@@ -50,6 +50,9 @@ if (-not (Test-Path -LiteralPath $installedExe) -or (Get-StartupBinaryHash $sour
     Copy-Item -LiteralPath $sourceExe -Destination $installedExe
 }
 Copy-Item -LiteralPath $sourceStarter -Destination (Join-Path $installRoot 'Start-With-Codex.ps1')
+if (Test-Path -LiteralPath (Join-Path $SourceDirectory 'THIRD_PARTY_NOTICES.md')) {
+    Copy-Item -LiteralPath (Join-Path $SourceDirectory 'THIRD_PARTY_NOTICES.md') -Destination $installRoot
+}
 $backup = $null
 if ($updated -ne $original) {
     $backup = $launcher + '.before-quota-startup-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '.bak'
