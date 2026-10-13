@@ -66,6 +66,7 @@ jobs:
             mkdir portable-check
             tar -xzf CodexQuotaStrip-linux-x86_64.tar.gz -C portable-check
             bash ../../packaging/linux/Test-UserInstall.sh portable-check/CodexQuotaStrip-linux-x86_64 | tee user-installer-test.txt
+            bash ../../packaging/linux/Test-UninstallPreservation.sh
             cp user-installer-test.txt artifact/
           else
             cp CodexQuotaStrip-macos-universal.zip artifact/
@@ -139,6 +140,7 @@ jobs:
           retention-days: 14
   linux-compatibility:
     needs: native
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:

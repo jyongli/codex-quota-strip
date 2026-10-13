@@ -6,13 +6,15 @@ The native version uses C++17, GTK3/Ayatana indicators on Linux and AppKit on ma
 
 ## Downloads and platforms
 
-[Download the native preview](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.4)
+[Download the native preview](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.5) · [Installer choices, install/update/remove and compatibility](installers.en.md)
 
 | Artifact | Environment |
 | --- | --- |
 | `CodexQuotaStrip-linux-x86_64.deb` | Ubuntu 22.04/24.04 and compatible Debian-based x64 desktops |
+| `CodexQuotaStrip-linux-x86_64.rpm` | Fedora 43 x64; other RPM systems need compatible dependencies |
 | `CodexQuotaStrip-linux-x86_64.tar.gz` | Linux x64 with GTK3, Ayatana AppIndicator, X11 and compatible runtime libraries |
 | `CodexQuotaStrip-macos-universal.zip` | macOS 14+, with an Apple Silicon arm64 / Intel x86_64 `.app` |
+| `CodexQuotaStrip-macos-universal.dmg` / `.pkg` | Same universal app, for drag-and-drop installation / installer wizard |
 
 Linux window following requires an X11 session. Wayland supports tray/settings, but does not expose a general way to locate other applications. Host detection and overlay controls are disabled there; online queries run at the configured interval. Your desktop must support AppIndicator/StatusNotifier. GNOME may need an indicator extension installed and enabled.
 
@@ -34,6 +36,8 @@ sudo apt install libgtk-3-0 libayatana-appindicator3-1 libx11-6
 tar -xzf CodexQuotaStrip-linux-x86_64.tar.gz
 ./CodexQuotaStrip-linux-x86_64/usr/bin/CodexQuotaStrip --settings
 ```
+
+The TGZ also provides `bash CodexQuotaStrip-linux-x86_64/install.sh` for per-user installation, with architecture/library checks and no sudo requirement. See [installers](installers.en.md) for removal and custom prefixes.
 
 Wine is not required. Launch from your application menu or run the extracted/built executable. Right-click either quota indicator to open settings, refresh or quit.
 

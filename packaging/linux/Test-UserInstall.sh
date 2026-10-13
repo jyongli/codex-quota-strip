@@ -22,6 +22,10 @@ test ! -e "$prefix/share/applications/codex-quota-strip.desktop"
 test ! -e "$prefix/lib/codex-quota-strip/CodexQuotaStrip"
 test -f "$prefix/lib/codex-quota-strip/keep.txt"
 grep -q 'seconds=777' "$XDG_CONFIG_HOME/codex-quota-strip/settings.ini"
+bash "$package_root/install.sh" install --prefix "$prefix"
+test -f "$prefix/lib/codex-quota-strip/keep.txt"
+cmp "$package_root/usr/bin/CodexQuotaStrip" "$prefix/lib/codex-quota-strip/CodexQuotaStrip"
+bash "$prefix/lib/codex-quota-strip/uninstall.sh"
 # 安装器不能覆盖没有本程序所有权标记的已有目录。
 mkdir -p "$HOME/foreign/lib/codex-quota-strip"
 if bash "$package_root/install.sh" install --prefix "$HOME/foreign"; then echo 'FAIL: unowned directory was overwritten'; exit 1; fi

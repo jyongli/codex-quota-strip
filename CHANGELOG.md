@@ -1,5 +1,12 @@
 # 变更记录 / Changelog
 
+## v3.0.0-preview.5 — 2026-10-13
+
+- 新增 Windows 当前用户中英安装向导，开始菜单与可选桌面快捷方式；升级／卸载保留设置和自建文件，不改自启钩子。 / Added a per-user Chinese/English Windows setup wizard and shortcuts; updates/removal preserve settings and extra files without changing startup hooks.
+- 新增 macOS 通用 DMG／PKG，固定 PKG 安装到 Applications；保留 APP ZIP。 / Added universal macOS DMG/PKG with fixed Applications installation, retaining APP ZIP.
+- 新增 Linux RPM 和 TGZ 用户安装／卸载入口，DEB／RPM 依赖按实际二进制生成，保留现有 DEB／TGZ。 / Added Linux RPM and TGZ user install/remove scripts, with binary-derived package dependencies and existing DEB/TGZ retained.
+- 增加隔离安装生命周期和多发行版容器检查；中英安装指南与 Release 说明按系统／架构列出选包和兼容范围。 / Added isolated installer lifecycle and multi-distribution container checks; bilingual guides and release notes map OS/architecture to downloads and compatibility.
+
 ## v3.0.0-preview.4 — 2026-10-12
 
 - 三平台账号查询自动读取所选 Codex `config.toml` 的代理环境变量和文件选定的 profile，下一次查询应用修改。 / All platforms reuse proxy environment variables and the file-selected profile from the chosen Codex config.toml; changes apply on the next query.

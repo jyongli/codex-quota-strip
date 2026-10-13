@@ -11,6 +11,7 @@ $registryPath = $null
 $exitCode = 0
 $uninstalled = $false
 $steps = [Collections.Generic.List[string]]::new()
+$fixtures = [Collections.Generic.List[object]]::new()
 
 function Assert-Condition([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
@@ -40,6 +41,68 @@ function Assert-Payload([string]$InstallPath, [string]$PayloadPath, [string]$Lic
         $actual = Join-Path $InstallPath $name
         Assert-Condition (Test-Path -LiteralPath $actual -PathType Leaf) "Installed payload missing: $name"
         Assert-Condition ((Get-FileHash -LiteralPath $expected).Hash -eq (Get-FileHash -LiteralPath $actual).Hash) "Installed payload hash mismatch: $name"
+    }
+}
+
+# 不只判断非零退出码；错误日志必须明确说明目标程序仍在运行，避免其他失败蒙混过关。
+function Invoke-ExpectedRunningFailure([string]$FilePath, [string[]]$Arguments, [string]$LogPath, [string]$Label) {
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $FilePath
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    foreach ($argument in $Arguments) { [void]$info.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        $process.WaitForExit()
+        Assert-Condition ($process.ExitCode -ne 0) "$Label unexpectedly succeeded while the installed application was running."
+        Assert-Condition (Test-Path -LiteralPath $LogPath) "$Label did not produce its diagnostic log."
+        Assert-Condition ((Get-Content -LiteralPath $LogPath -Raw) -match 'still running|仍在运行') "$Label failed without reporting the expected running application."
+        Write-Output "PASS: $Label refused the running fixture (exit $($process.ExitCode))."
+    } finally { $process.Dispose() }
+}
+
+function Start-HeadlessFixture([string]$Executable, [string]$FixtureName) {
+    $fixtureHome = Join-Path $testRoot $FixtureName
+    [void](New-Item -ItemType Directory -Path (Join-Path $fixtureHome 'sessions') -Force)
+    $status = Join-Path $fixtureHome 'status.json'
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $Executable
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    # 环境覆盖仅属于这一个子进程，不改变真实 CODEX_HOME、LOCALAPPDATA 或主会话。
+    $info.Environment['CODEX_HOME'] = $fixtureHome
+    $info.Environment['LOCALAPPDATA'] = $fixtureHome
+    foreach ($argument in @('--headless', '--local-only', '--home', $fixtureHome, '--status', $status)) {
+        [void]$info.ArgumentList.Add($argument)
+    }
+    $owned = [pscustomobject]@{ Process = [Diagnostics.Process]::Start($info); Executable = $Executable; Home = $fixtureHome }
+    $fixtures.Add($owned)
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (-not (Test-Path -LiteralPath $status) -and -not $owned.Process.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 100
+    }
+    Assert-Condition (-not $owned.Process.HasExited -and (Test-Path -LiteralPath $status)) "Headless fixture failed to initialize: $FixtureName"
+    return $owned
+}
+
+function Stop-HeadlessFixture($Fixture) {
+    if ($Fixture.Process.HasExited) { return }
+    # 只向已保存句柄且路径匹配的本次 PID 发退出命令；必要时仅终止这个进程对象。
+    Assert-Condition ($Fixture.Process.Path -eq $Fixture.Executable) 'Refusing to stop a fixture whose executable path changed.'
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $Fixture.Executable
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.Environment['CODEX_HOME'] = $Fixture.Home
+    $info.Environment['LOCALAPPDATA'] = $Fixture.Home
+    foreach ($argument in @('--headless', '--local-only', '--home', $Fixture.Home, '--quit')) {
+        [void]$info.ArgumentList.Add($argument)
+    }
+    $quitProcess = [Diagnostics.Process]::Start($info)
+    try { $quitProcess.WaitForExit() } finally { $quitProcess.Dispose() }
+    if (-not $Fixture.Process.WaitForExit(5000)) {
+        $Fixture.Process.Kill()
+        Assert-Condition ($Fixture.Process.WaitForExit(5000)) 'Owned headless fixture did not exit.'
     }
 }
 
@@ -105,6 +168,26 @@ try {
     Assert-Condition ($removeLink.TargetPath -eq (Join-Path $installPath 'unins000.exe')) 'Uninstall shortcut target mismatch.'
     $steps.Add('Installed payload SHA256, HKCU registration, shortcuts and disabled silent launch verified.')
 
+    # 两个独立 home 防止单实例复用；另一路径实例在升级/卸载全流程中必须保持存活。
+    $otherDirectory = Join-Path $testRoot 'other-installation'
+    [void](New-Item -ItemType Directory -Path $otherDirectory -Force)
+    $otherExecutable = Join-Path $otherDirectory 'CodexQuotaStrip.exe'
+    Copy-Item -LiteralPath (Join-Path $payloadPath 'CodexQuotaStrip.exe') -Destination $otherExecutable
+    $otherFixture = Start-HeadlessFixture $otherExecutable 'other-home'
+    $installedFixture = Start-HeadlessFixture (Join-Path $installPath 'CodexQuotaStrip.exe') 'installed-home'
+    $blockedUpgradeLog = Join-Path $testRoot 'blocked-upgrade.log'
+    Invoke-ExpectedRunningFailure (Join-Path $upgradeOutput $setupName) ($silentArguments + @('/LANG=english', '/TASKS=', "/LOG=$blockedUpgradeLog")) $blockedUpgradeLog 'Upgrade'
+    Assert-Payload $installPath $payloadPath $licensePath
+    Assert-TestRegistration $baseVersion
+    Assert-Condition (-not $installedFixture.Process.HasExited -and -not $otherFixture.Process.HasExited) 'Refused upgrade stopped a fixture.'
+    $blockedUninstallLog = Join-Path $testRoot 'blocked-uninstall.log'
+    Invoke-ExpectedRunningFailure (Join-Path $installPath 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$blockedUninstallLog") $blockedUninstallLog 'Uninstall'
+    Assert-Payload $installPath $payloadPath $licensePath
+    Assert-TestRegistration $baseVersion
+    Assert-Condition (-not $installedFixture.Process.HasExited -and -not $otherFixture.Process.HasExited) 'Refused uninstall stopped a fixture.'
+    Stop-HeadlessFixture $installedFixture
+    $steps.Add('Same-path running process blocked upgrade/uninstall with intact payload; neither owned process was stopped.')
+
     # 合成用户设置与额外文件均只写入临时目录，覆盖卸载不可递归删目录的边界。
     $settingsPath = Join-Path $installPath 'settings.ini'
     [IO.File]::WriteAllText($settingsPath, "[refresh]`r`nonline=0`r`nseconds=97`r`n[display]`r`nlanguage=en`r`n")
@@ -120,6 +203,7 @@ try {
     Invoke-CheckedProcess (Join-Path $upgradeOutput $setupName) ($silentArguments + @('/LANG=chinesesimplified', '/TASKS=desktopicon', "/LOG=$(Join-Path $testRoot 'upgrade.log')")) 'Silent upgrade'
     Assert-Payload $installPath $payloadPath $licensePath
     Assert-TestRegistration $Version
+    Assert-Condition (-not $otherFixture.Process.HasExited) 'Upgrade stopped the application from another installation folder.'
     foreach ($file in $sentinels) {
         Assert-Condition ((Get-FileHash -LiteralPath $file).Hash -eq $sentinelHashes[$file]) "Upgrade changed user file: $file"
     }
@@ -134,6 +218,7 @@ try {
         Assert-Condition (-not (Test-Path -LiteralPath (Join-Path $installPath $name))) "Uninstall left installed payload: $name"
     }
     Assert-Condition (-not (Test-Path -LiteralPath $registryPath)) 'Test uninstall registration remained.'
+    Assert-Condition (-not $otherFixture.Process.HasExited) 'Uninstall stopped the application from another installation folder.'
     foreach ($file in $sentinels) {
         Assert-Condition ((Get-FileHash -LiteralPath $file).Hash -eq $sentinelHashes[$file]) "Uninstall changed user file: $file"
     }
@@ -145,6 +230,12 @@ try {
     if ($_.Exception.Data.Contains('ExitCode')) { $exitCode = [int]$_.Exception.Data['ExitCode'] } else { $exitCode = 1 }
     Write-Error $_ -ErrorAction Continue
 } finally {
+    foreach ($fixture in $fixtures) {
+        try { Stop-HeadlessFixture $fixture } catch {
+            Write-Warning "Owned fixture cleanup failed: $($_.Exception.Message)"
+            if ($exitCode -eq 0) { $exitCode = 1 }
+        } finally { $fixture.Process.Dispose() }
+    }
     # 失败时仅清理可证明属于本次运行的安装；保留测试目录和日志供 CI 上传。
     if (-not $uninstalled -and $registryPath -and (Test-Path -LiteralPath $registryPath)) {
         try {

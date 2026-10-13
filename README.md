@@ -8,7 +8,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 
 程序使用 C++17 和原生系统界面，不依赖 Electron 或 WebView。中文／English 可在设置中切换并保存，立即生效。它是独立运行的辅助程序，与 OpenAI 没有官方隶属关系。英文说明见 [README.en.md](README.en.md)。
 
-**[下载 v3.0.0-preview.4](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.4)** · [Linux／macOS 安装与构建](docs/native-desktop.zh-CN.md)
+**[下载 v3.0.0-preview.5](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.5)** · [安装包选择／兼容环境／安装与卸载](docs/installers.zh-CN.md) · [Linux／macOS 构建](docs/native-desktop.zh-CN.md)
 
 下文的命令及详细配置主要针对 Windows；Linux／macOS 请使用上面的独立原生指南。
 
@@ -51,7 +51,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 | 顶部／左侧窗口跟随 | 支持 | X11 支持；Wayland 仅托盘 | 需要辅助功能权限 |
 | 账号查询与中英文设置 | 支持 | 支持 | 支持 |
 | 本地会话日志回退 | 支持 | 当前预览版未提供 | 当前预览版未提供 |
-| 发布包 | ZIP | DEB／TGZ | Apple Silicon／Intel 通用 APP ZIP |
+| 发布包 | 安装向导 EXE／便携 ZIP | DEB／RPM／带用户安装脚本的 TGZ | 通用 DMG／PKG／APP ZIP |
 
 Linux／macOS 的安装、设置和预览版验证范围见 [原生平台指南](docs/native-desktop.zh-CN.md)。
 
@@ -70,6 +70,8 @@ Linux／macOS 的安装、设置和预览版验证范围见 [原生平台指南]
 | Windows ARM64 / 无桌面服务器 | 当前仅输出 x64；ARM64 模拟未验证，界面和集成测试需要交互式桌面。 |
 
 ## 安装与构建
+
+普通用户可直接下载 [对应系统安装包](docs/installers.zh-CN.md)，无需安装编译工具。Windows 推荐 `windows-x64-setup.exe`，Ubuntu／Debian 选 `.deb`，Fedora 选 `.rpm`，macOS 推荐通用 `.dmg`；无管理员权限的 Linux 用户可用 TGZ 内的用户安装脚本。以下为从源码构建的步骤。
 
 以下命令默认在**仓库根目录**执行。ZIP 源码需先解压，并进入包含 `Build.ps1` 的目录。当前仓库提供源码，构建产物位于 `build\`。
 

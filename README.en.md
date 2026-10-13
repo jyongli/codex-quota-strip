@@ -8,7 +8,7 @@ It is intended for Codex desktop or CLI users who want visible quota values and 
 
 Built with C++17 and native platform interfaces, without Electron or WebView. Chinese/English can be selected in Settings and applied immediately. This is an independently running companion, not affiliated with OpenAI. See [README.md](README.md) for the Chinese guide.
 
-**[Download v3.0.0-preview.4](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.4)** · [Linux/macOS installation and build guide](docs/native-desktop.en.md)
+**[Download v3.0.0-preview.5](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.5)** · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
 
 Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 
@@ -51,7 +51,7 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 | Top/left window following | Supported | X11 supported; tray-only on Wayland | Accessibility permission required |
 | Account queries and Chinese/English settings | Supported | Supported | Supported |
 | Local session-log fallback | Supported | Not included in the current preview | Not included in the current preview |
-| Download package | ZIP | DEB/TGZ | Universal Apple Silicon/Intel APP ZIP |
+| Download package | Setup EXE / portable ZIP | DEB / RPM / TGZ with user installer | Universal DMG / PKG / APP ZIP |
 
 See the [native platform guide](docs/native-desktop.en.md) for Linux/macOS installation, settings and preview validation scope.
 
@@ -70,6 +70,8 @@ See the [native platform guide](docs/native-desktop.en.md) for Linux/macOS insta
 | Windows ARM64 / headless servers | Builds target x64; ARM64 emulation is unverified. UI and integration tests require an interactive desktop. |
 
 ## Install and build
+
+Most users can download a [platform installer](docs/installers.en.md) without compiler tools. Choose windows-x64-setup.exe on Windows, DEB on Ubuntu/Debian, RPM on Fedora, or universal DMG on macOS. Linux users without administrator access can use the TGZ user installer. The following steps build from source.
 
 Run commands from the **repository root** unless stated otherwise. For a source ZIP, extract it and open the directory containing `Build.ps1`. This repository provides source; artifacts go into `build\`.
 

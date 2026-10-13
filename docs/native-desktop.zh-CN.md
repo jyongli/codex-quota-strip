@@ -6,13 +6,15 @@
 
 ## 下载与平台
 
-[下载原生预览版](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.4)
+[下载原生预览版](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.5) · [完整选包、安装／升级／卸载及兼容说明](installers.zh-CN.md)
 
 | 产物 | 适用环境 |
 | --- | --- |
 | `CodexQuotaStrip-linux-x86_64.deb` | Ubuntu 22.04／24.04、兼容的 Debian 系 x64 桌面 |
+| `CodexQuotaStrip-linux-x86_64.rpm` | Fedora 43 x64；其他 RPM 系统需兼容依赖 |
 | `CodexQuotaStrip-linux-x86_64.tar.gz` | Linux x64，需安装 GTK3、Ayatana AppIndicator、X11 与兼容的运行库 |
 | `CodexQuotaStrip-macos-universal.zip` | macOS 14+，包含 Apple Silicon arm64 和 Intel x86_64 的 `.app` |
+| `CodexQuotaStrip-macos-universal.dmg`／`.pkg` | 同一通用应用，分别用于拖放安装／安装向导 |
 
 Linux 悬浮条需要 X11 会话。Wayland 提供托盘和配置窗口，但不能通用地读取其他应用的位置；宿主检测／悬浮设置会禁用，在线查询按间隔运行。托盘需要桌面支持 AppIndicator／StatusNotifier；GNOME 若没有显示图标，可安装并启用相应扩展。
 
@@ -34,6 +36,8 @@ sudo apt install libgtk-3-0 libayatana-appindicator3-1 libx11-6
 tar -xzf CodexQuotaStrip-linux-x86_64.tar.gz
 ./CodexQuotaStrip-linux-x86_64/usr/bin/CodexQuotaStrip --settings
 ```
+
+TGZ 另提供 `bash CodexQuotaStrip-linux-x86_64/install.sh` 当前用户安装入口，会先检查架构和运行库；不需要 sudo，卸载和自定义路径见 [安装指南](installers.zh-CN.md)。
 
 程序不依赖 Wine。可从应用菜单打开，或运行构建／解压得到的可执行文件。右键任一配额图标打开设置、刷新或退出。
 

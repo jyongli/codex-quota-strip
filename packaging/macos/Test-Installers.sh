@@ -19,9 +19,11 @@ hdiutil detach "$work/mount"; mounted=false
 # 只在一次性 CI runner 进行系统级 PKG 安装，拒绝覆盖预先存在的应用。
 test "${CI:-}" = true
 test ! -e /Applications/CodexQuotaStrip.app
+applications_metadata=$(stat -f '%Lp:%u:%g' /Applications)
 pkgutil --expand "$output/CodexQuotaStrip-macos-universal.pkg" "$work/expanded"
 test ! -d "$work/expanded/Scripts"
 sudo installer -pkg "$output/CodexQuotaStrip-macos-universal.pkg" -target /
+test "$(stat -f '%Lp:%u:%g' /Applications)" = "$applications_metadata"
 codesign --verify --deep --strict /Applications/CodexQuotaStrip.app
 cmp "$build_dir/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip" /Applications/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip
 test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' /Applications/CodexQuotaStrip.app/Contents/Info.plist)" = 14.0

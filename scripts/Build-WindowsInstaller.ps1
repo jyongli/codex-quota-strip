@@ -52,8 +52,38 @@ try {
         throw 'Inno Setup 6.3+ ISCC.exe is required. Use the preinstalled CI compiler or pass -CompilerPath; no tools are installed automatically.'
     }
     $CompilerPath = [IO.Path]::GetFullPath($CompilerPath)
-    $compilerVersion = (Get-Item -LiteralPath $CompilerPath).VersionInfo
-    if ($compilerVersion.FileMajorPart -ne 6 -or $compilerVersion.FileMinorPart -lt 3) {
+    $compilerMetadata = (Get-Item -LiteralPath $CompilerPath).VersionInfo
+    Write-Output "ISCC: $CompilerPath; FileVersion=$($compilerMetadata.FileVersion); ProductVersion=$($compilerMetadata.ProductVersion)"
+    # ISCC 的文件版本可能固定为 6.0；用无输出的 stdin 编译读取实际 ISCmplr 引擎版本。
+    $probeInfo = [Diagnostics.ProcessStartInfo]::new()
+    $probeInfo.FileName = $CompilerPath
+    $probeInfo.UseShellExecute = $false
+    $probeInfo.CreateNoWindow = $true
+    $probeInfo.RedirectStandardInput = $true
+    $probeInfo.RedirectStandardOutput = $true
+    $probeInfo.RedirectStandardError = $true
+    [void]$probeInfo.ArgumentList.Add('-')
+    $probe = [Diagnostics.Process]::Start($probeInfo)
+    try {
+        $probeOutputTask = $probe.StandardOutput.ReadToEndAsync()
+        $probeErrorTask = $probe.StandardError.ReadToEndAsync()
+        $probe.StandardInput.WriteLine("[Setup]`nAppName=Compiler version probe`nAppVersion=1`nOutput=no`nCreateAppDir=no`nUninstallable=no")
+        $probe.StandardInput.Close()
+        $probe.WaitForExit()
+        $probeOutput = $probeOutputTask.GetAwaiter().GetResult()
+        $probeError = $probeErrorTask.GetAwaiter().GetResult()
+        if ($probe.ExitCode -ne 0) {
+            Write-Output $probeOutput
+            Write-Error $probeError -ErrorAction Continue
+            exit $probe.ExitCode
+        }
+    } finally { $probe.Dispose() }
+    if ($probeOutput -notmatch '(?im)^Compiler engine version:[^\r\n]*?(\d+\.\d+\.\d+(?:\.\d+)?)') {
+        throw 'ISCC did not report its compiler engine version.'
+    }
+    $compilerVersion = [version]$Matches[1]
+    Write-Output "Compiler engine version: $compilerVersion"
+    if ($compilerVersion.Major -ne 6 -or $compilerVersion.Minor -lt 3) {
         throw 'Use Inno Setup 6.3 or later in the 6.x series (x64compatible requires 6.3+).'
     }
     [void](New-Item -ItemType Directory -Path $OutputDirectory -Force)

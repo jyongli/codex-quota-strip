@@ -26,8 +26,12 @@ if [ "$action" = uninstall ]; then
   # 逐项删除本程序登记的文件；用户创建文件、配置及 Codex 账号数据都不在清单内。
   if [ -L "$link" ] && [ "$(readlink "$link")" = "$app_dir/CodexQuotaStrip" ]; then rm -- "$link"; fi
   if [ -f "$desktop" ] && grep -q '^X-CodexQuotaStrip-Installer=1$' "$desktop"; then rm -- "$desktop"; fi
-  for name in CodexQuotaStrip LICENSE THIRD_PARTY_NOTICES.md uninstall.sh package-id; do rm -f -- "$app_dir/$name"; done
-  rmdir -- "$app_dir" 2>/dev/null || true
+  for name in CodexQuotaStrip LICENSE THIRD_PARTY_NOTICES.md uninstall.sh; do rm -f -- "$app_dir/$name"; done
+  # 额外用户文件使目录非空时保留所有权标记，后续可以重装；不误判为外部目录。
+  if [ -z "$(find "$app_dir" -mindepth 1 -maxdepth 1 ! -name package-id -print -quit)" ]; then
+    rm -- "$app_dir/package-id"
+    rmdir -- "$app_dir"
+  fi
   echo 'Uninstalled. User configuration and account data were preserved.'
   exit 0
 fi
