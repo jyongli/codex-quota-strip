@@ -113,10 +113,23 @@ Filename: "{app}\CodexQuotaStrip.exe"; Description: "{cm:LaunchApp}"; Flags: now
 
 #ifdef TestBuild
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#InstallerAppId}_is1"; ValueType: string; ValueName: "QuotaStripInstallerTestRoot"; ValueData: "{#TestRoot}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#InstallerAppId}_is1"; ValueType: string; ValueName: "QuotaStripInstallerTestRoot"; ValueData: "{#TestRoot}"; Flags: 64bit uninsdeletevalue
 #endif
 
 [Code]
+#ifdef TestBuild
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  // Inno 在 [Registry] 后删除重建自己的卸载键；归属标记必须等注册完成后写回。
+  // [Registry] 仍登记其 64 位卸载动作，标记与真实卸载项保持同一视图和生命周期。
+  if CurStep = ssPostInstall then
+    if not RegWriteStringValue(HKCU64,
+      'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#InstallerAppId}_is1',
+      'QuotaStripInstallerTestRoot', '{#TestRoot}') then
+      RaiseException('Unable to record isolated test installation ownership.');
+end;
+#endif
+
 // home 决定程序 mutex 名称，因此按完整 exe 路径检查，不调用可能影响其他实例的 --quit。
 function RunningAppMessage: String;
 var
