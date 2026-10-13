@@ -26,7 +26,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libx11-dev xvfb dbus-x11
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libx11-dev xvfb dbus-x11 rpm dpkg-dev
       - name: Configure Linux
         if: runner.os == 'Linux'
         run: cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
@@ -62,13 +62,20 @@ jobs:
           cpack
           mkdir -p artifact
           if [ "${{ runner.os }}" = "Linux" ]; then
-            cp CodexQuotaStrip-linux-x86_64.deb CodexQuotaStrip-linux-x86_64.tar.gz artifact/
+            cp CodexQuotaStrip-linux-x86_64.deb CodexQuotaStrip-linux-x86_64.rpm CodexQuotaStrip-linux-x86_64.tar.gz artifact/
+            mkdir portable-check
+            tar -xzf CodexQuotaStrip-linux-x86_64.tar.gz -C portable-check
+            bash ../../packaging/linux/Test-UserInstall.sh portable-check/CodexQuotaStrip-linux-x86_64 | tee user-installer-test.txt
+            cp user-installer-test.txt artifact/
           else
             cp CodexQuotaStrip-macos-universal.zip artifact/
             # 检查打包后的 .app，确认资源复制没有破坏签名且包含两个架构。
             unzip -q CodexQuotaStrip-macos-universal.zip -d package-check
             codesign --verify --deep --strict package-check/CodexQuotaStrip-macos-universal/CodexQuotaStrip.app
             lipo package-check/CodexQuotaStrip-macos-universal/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip -verify_arch arm64 x86_64
+            bash ../../packaging/macos/Build-Installers.sh "$PWD"
+            bash ../../packaging/macos/Test-Installers.sh "$PWD" | tee installer-test.txt
+            cp installer-test.txt artifact/
           fi
           cp ../../LICENSE artifact/
           cp ../../THIRD_PARTY_NOTICES.md artifact/
@@ -102,6 +109,10 @@ jobs:
         run: ./Build.ps1
       - name: Run default tests
         run: ./Test.ps1
+      - name: Build Windows installation wizard
+        run: ./scripts/Build-WindowsInstaller.ps1 -Version v3.0.0-preview.5 -OutputDirectory build/installers
+      - name: Verify isolated install, upgrade and uninstall
+        run: ./scripts/Test-WindowsInstaller.ps1 -Version v3.0.0-preview.5
       - name: Package artifact with license and checksums
         run: |
           $ErrorActionPreference = 'Stop'
@@ -111,6 +122,7 @@ jobs:
           foreach ($file in @('build/CodexQuotaStrip.exe', 'build/Start-With-Codex.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) {
             Copy-Item -LiteralPath $file -Destination $package
           }
+          Copy-Item -LiteralPath 'build/installers/CodexQuotaStrip-windows-x64-setup.exe' -Destination $package
           $provenance = "Repository: $env:GITHUB_REPOSITORY`nCommit: $env:GITHUB_SHA`nTarget: Windows x64`n"
           [IO.File]::WriteAllText((Join-Path $package 'BUILD-INFO.txt'), $provenance, [Text.UTF8Encoding]::new($false))
           $lines = foreach ($file in Get-ChildItem -LiteralPath $package -File | Sort-Object Name) {
@@ -125,3 +137,30 @@ jobs:
           path: build/package/
           if-no-files-found: error
           retention-days: 14
+  linux-compatibility:
+    needs: native
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:22.04
+            format: deb
+          - image: ubuntu:24.04
+            format: deb
+          - image: debian:12
+            format: deb
+          - image: fedora:43
+            format: rpm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codex-quota-strip-Linux-native
+          path: build/packages
+      - name: Install release package on target distribution
+        # 一次性容器内实际解析依赖、运行打包程序 UI smoke、重装和卸载。
+        run: docker run --rm -v "$PWD:/repo:ro" '${{ matrix.image }}' bash /repo/packaging/linux/Test-Packages.sh /repo/build/packages '${{ matrix.format }}'
