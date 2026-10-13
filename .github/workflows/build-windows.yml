@@ -114,16 +114,26 @@ jobs:
         run: ./scripts/Build-WindowsInstaller.ps1 -Version v3.0.0-preview.5 -OutputDirectory build/installers
       - name: Verify isolated install, upgrade and uninstall
         run: ./scripts/Test-WindowsInstaller.ps1 -Version v3.0.0-preview.5
+      - name: Collect isolated installer diagnostics
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $PWD 'build/installer-test-evidence'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          # TEMP 可能与工作目录不在同一磁盘，先复制明确的诊断文件到统一目录。
+          foreach ($fixture in Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'CodexQuotaStrip-installer-*') {
+            $destination = Join-Path $evidence $fixture.Name
+            New-Item -ItemType Directory -Path $destination -Force | Out-Null
+            Get-ChildItem -LiteralPath $fixture.FullName -File |
+              Where-Object { $_.Extension -eq '.log' -or $_.Name -eq 'test-results.json' } |
+              Copy-Item -Destination $destination
+          }
       - name: Save isolated installer diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: windows-installer-test-evidence
-          path: |
-            ${{ runner.temp }}/CodexQuotaStrip-installer-*/test-results.json
-            ${{ runner.temp }}/CodexQuotaStrip-installer-*/*.log
-            C:/Users/runneradmin/AppData/Local/Temp/CodexQuotaStrip-installer-*/test-results.json
-            C:/Users/runneradmin/AppData/Local/Temp/CodexQuotaStrip-installer-*/*.log
+          path: build/installer-test-evidence/
           if-no-files-found: ignore
           retention-days: 14
       - name: Package artifact with license and checksums
