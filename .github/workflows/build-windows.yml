@@ -120,7 +120,8 @@ jobs:
         with:
           name: windows-installer-test-evidence
           path: |
-            ${{ runner.temp }}/../CodexQuotaStrip-installer-*/test-results.json
+            ${{ runner.temp }}/CodexQuotaStrip-installer-*/test-results.json
+            ${{ runner.temp }}/CodexQuotaStrip-installer-*/*.log
             C:/Users/runneradmin/AppData/Local/Temp/CodexQuotaStrip-installer-*/test-results.json
             C:/Users/runneradmin/AppData/Local/Temp/CodexQuotaStrip-installer-*/*.log
           if-no-files-found: ignore

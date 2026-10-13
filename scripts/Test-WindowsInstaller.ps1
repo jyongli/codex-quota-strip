@@ -23,10 +23,23 @@ function Invoke-CheckedProcess([string]$FilePath, [string[]]$Arguments, [string]
     $startInfo.FileName = $FilePath
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
     foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::Start($startInfo)
     try {
+        # 两条管道同时异步排空；先等退出再读取同步管道会因缓冲区写满而死锁。
+        $outputTask = $process.StandardOutput.ReadToEndAsync()
+        $errorTask = $process.StandardError.ReadToEndAsync()
         $process.WaitForExit()
+        $outputText = $outputTask.GetAwaiter().GetResult()
+        $errorText = $errorTask.GetAwaiter().GetResult()
+        if ($outputText) { Write-Output $outputText.TrimEnd() }
+        if ($errorText) { [Console]::Error.WriteLine($errorText.TrimEnd()) }
+        # 每次子进程输出同时写入隔离目录，让 CI 可上传完整编译及测试诊断。
+        $logName = ($Label -replace '[^A-Za-z0-9.-]', '-') + '.process.log'
+        [IO.File]::WriteAllText((Join-Path $testRoot $logName),
+            "ExitCode=$($process.ExitCode)`r`nSTDOUT:`r`n$outputText`r`nSTDERR:`r`n$errorText")
         if ($process.ExitCode -ne 0) {
             $failure = [Exception]::new("$Label exited with code $($process.ExitCode). Logs: $testRoot")
             $failure.Data['ExitCode'] = $process.ExitCode
@@ -50,10 +63,18 @@ function Invoke-ExpectedRunningFailure([string]$FilePath, [string[]]$Arguments, 
     $info.FileName = $FilePath
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
     foreach ($argument in $Arguments) { [void]$info.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::Start($info)
     try {
+        $outputTask = $process.StandardOutput.ReadToEndAsync()
+        $errorTask = $process.StandardError.ReadToEndAsync()
         $process.WaitForExit()
+        $outputText = $outputTask.GetAwaiter().GetResult()
+        $errorText = $errorTask.GetAwaiter().GetResult()
+        if ($outputText) { Write-Output $outputText.TrimEnd() }
+        if ($errorText) { [Console]::Error.WriteLine($errorText.TrimEnd()) }
         Assert-Condition ($process.ExitCode -ne 0) "$Label unexpectedly succeeded while the installed application was running."
         Assert-Condition (Test-Path -LiteralPath $LogPath) "$Label did not produce its diagnostic log."
         Assert-Condition ((Get-Content -LiteralPath $LogPath -Raw) -match 'still running|仍在运行') "$Label failed without reporting the expected running application."

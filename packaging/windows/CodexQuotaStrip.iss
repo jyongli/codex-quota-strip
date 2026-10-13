@@ -113,7 +113,7 @@ Filename: "{app}\CodexQuotaStrip.exe"; Description: "{cm:LaunchApp}"; Flags: now
 
 #ifdef TestBuild
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#InstallerAppId}_is1"; ValueType: string; ValueName: "QuotaStripInstallerTestRoot"; ValueData: "{#TestRoot}"; Flags: 64bit uninsdeletevalue
+Root: HKCU64; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{#InstallerAppId}_is1"; ValueType: string; ValueName: "QuotaStripInstallerTestRoot"; ValueData: "{#TestRoot}"; Flags: uninsdeletevalue
 #endif
 
 [Code]
