@@ -2,6 +2,11 @@ name: Build Desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Build and validate Windows only
+        type: boolean
+        default: false
 
 # 仅需要读取源码；工作流不使用账号凭据、不发布 Release、不写入仓库。
 permissions:
@@ -9,6 +14,7 @@ permissions:
 
 jobs:
   native:
+    if: ${{ !inputs.windows_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -162,7 +168,7 @@ jobs:
           retention-days: 14
   linux-compatibility:
     needs: native
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && !inputs.windows_only }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:

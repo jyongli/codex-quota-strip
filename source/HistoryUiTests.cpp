@@ -118,9 +118,11 @@ int wmain(int argc,wchar_t** argv){
         std::cout<<"PASS: native history entry point\n";
         SendMessageW(target.control,WM_COMMAND,7,0);EnumWindows(Find,reinterpret_cast<LPARAM>(&target));Check(target.settings!=nullptr,"Settings must open alongside history");
         Check(GetDlgItem(target.settings,209)&&GetDlgItem(target.settings,210)&&GetDlgItem(target.settings,304)&&GetDlgItem(target.settings,305),"History settings must expose enable, directory, browse and viewer");
+        RECT originalSettings{};GetWindowRect(target.settings,&originalSettings);SetWindowPos(target.settings,nullptr,0,0,originalSettings.right-originalSettings.left,520,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
         SendMessageW(target.settings,WM_VSCROLL,SB_BOTTOM,0);RECT viewport{},saveButton{};GetClientRect(target.settings,&viewport);GetWindowRect(GetDlgItem(target.settings,302),&saveButton);MapWindowPoints(nullptr,target.settings,reinterpret_cast<POINT*>(&saveButton),2);
         Check(saveButton.top>=0&&saveButton.bottom<=viewport.bottom,"Scrolling must expose the entire Save button on a small or high-DPI screen");
         SendMessageW(target.settings,WM_VSCROLL,SB_TOP,0);
+        SetWindowPos(target.settings,nullptr,0,0,originalSettings.right-originalSettings.left,originalSettings.bottom-originalSettings.top,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
         // 保存相对目录应失败，不能让后续写入落入不可预测的工作目录。
         SendMessageW(GetDlgItem(target.settings,210),WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"relative-history"));SendMessageW(target.settings,WM_COMMAND,302,0);
         auto validation=Caption(GetDlgItem(target.settings,207));char validationUtf8[4096]{};WideCharToMultiByte(CP_UTF8,0,validation.c_str(),-1,validationUtf8,4096,nullptr,nullptr);
@@ -129,6 +131,7 @@ int wmain(int argc,wchar_t** argv){
         auto directory=root/L"custom-history";SendMessageW(GetDlgItem(target.settings,210),WM_SETTEXT,0,reinterpret_cast<LPARAM>(directory.c_str()));
         SendMessageW(GetDlgItem(target.settings,208),CB_SETCURSEL,1,0);SendMessageW(target.settings,WM_COMMAND,302,0);
         Check(Caption(GetDlgItem(target.settings,305))==L"View quota changes","History controls must translate live to English");
+        Check(Caption(target.history)==L"Codex Quota — History","An already open history viewer must translate with settings");
         wchar_t saved[32768]{};GetPrivateProfileStringW(L"history",L"directory",L"",saved,32768,settings.c_str());Check(saved==directory.wstring(),"Chosen history directory must persist");
         auto stamp=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();Append(log,20,40,stamp);Check(Wait([&]{return State(status).get("weekly_remaining").num==60;}),"Local baseline must reach the displayed quota");
         SendMessageW(target.history,WM_COMMAND,403,0);

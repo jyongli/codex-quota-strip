@@ -691,7 +691,8 @@ void OpenHistory(){
     WNDCLASSEXW chart{sizeof(chart)};chart.hInstance=instance;chart.lpfnWndProc=HistoryChartProcedure;chart.lpszClassName=L"QuotaHistoryChart";chart.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassExW(&chart);
     std::wstring name=L"QuotaHistory_"+windowClass;WNDCLASSEXW cls{sizeof(cls)};cls.hInstance=instance;cls.lpfnWndProc=HistoryProcedure;cls.lpszClassName=name.c_str();cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassExW(&cls);
     UINT d=GetDpiForSystem();RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
-    historyWindow=CreateWindowExW(0,name.c_str(),Ui(L"Codex 配额 — 额度变化"),WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,std::min<int>(MulDiv(1040,d,96),work.right-work.left),std::min<int>(MulDiv(660,d,96),work.bottom-work.top),nullptr,nullptr,instance,nullptr);
+    int width=std::min<int>(MulDiv(1040,d,96),work.right-work.left),height=std::min<int>(MulDiv(660,d,96),work.bottom-work.top);
+    historyWindow=CreateWindowExW(0,name.c_str(),Ui(L"Codex 配额 — 额度变化"),WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,work.left+(work.right-work.left-width)/2,work.top+(work.bottom-work.top-height)/2,width,height,nullptr,nullptr,instance,nullptr);
     if(historyWindow){BOOL dark=TRUE;DwmSetWindowAttribute(historyWindow,DWMWA_USE_IMMERSIVE_DARK_MODE,&dark,sizeof(dark));LayoutHistory(historyWindow);TranslateHistory();RefreshHistory();ShowWindow(historyWindow,SW_SHOW);SetWindowPos(historyWindow,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW);SetForegroundWindow(historyWindow);AtomicStatus(GetData());}
 }
 
@@ -865,7 +866,8 @@ void OpenSettings(){
     WNDCLASSEXW cls{sizeof(cls)};cls.hInstance=instance;cls.lpfnWndProc=SettingsProcedure;cls.lpszClassName=name.c_str();cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassExW(&cls);
     UINT d=GetDpiForSystem();RECT bounds{0,0,MulDiv(620,d,96),MulDiv(858,d,96)};DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL;AdjustWindowRectExForDpi(&bounds,style,FALSE,0,d);
     RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
-    settingsWindow=CreateWindowExW(0,name.c_str(),Ui(L"Codex 配额 — 配置"),style,CW_USEDEFAULT,CW_USEDEFAULT,bounds.right-bounds.left,std::min(bounds.bottom-bounds.top,work.bottom-work.top),nullptr,nullptr,instance,nullptr);
+    int width=bounds.right-bounds.left,height=std::min(bounds.bottom-bounds.top,work.bottom-work.top);
+    settingsWindow=CreateWindowExW(0,name.c_str(),Ui(L"Codex 配额 — 配置"),style,work.left+(work.right-work.left-width)/2,work.top+(work.bottom-work.top-height)/2,width,height,nullptr,nullptr,instance,nullptr);
     if(settingsWindow){
         BOOL dark=TRUE;DwmSetWindowAttribute(settingsWindow,DWMWA_USE_IMMERSIVE_DARK_MODE,&dark,sizeof(dark));
         // 隐藏启动会覆盖第一次 ShowWindow；用户明确打开配置时强制显示该窗口。
