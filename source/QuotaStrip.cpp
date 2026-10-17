@@ -4,6 +4,7 @@
 #include "QuotaProvider.h"
 #include "SettingsTheme.h"
 #include "Localization.h"
+#include "QuotaHistory.h"
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -14,6 +15,7 @@
 #include <set>
 #include <thread>
 #include <imm.h>
+#include <shlobj.h>
 
 namespace {
 constexpr UINT StateChanged = WM_APP + 1, HostChanged = WM_APP + 2, TrayMessage = WM_APP + 3;
@@ -34,6 +36,12 @@ Data data;
 std::mutex dataMutex;
 // 控制窗口不属于 Codex；Codex 关闭时只销毁可重建的显示条。
 HWND window = nullptr, controller = nullptr, settingsWindow = nullptr, host = nullptr, tooltip = nullptr;
+HWND historyWindow = nullptr;
+quota::HistoryStore historyStore;
+quota::HistoryReadResult historyRows;
+quota_ui::Theme historyTheme;
+bool historyChart = false;
+int settingsScroll = 0;
 HINSTANCE instance = nullptr;
 HANDLE stopEvent = nullptr, rescanEvent = nullptr;
 HANDLE refreshEvent = nullptr;
@@ -62,6 +70,8 @@ bool lastVisible = false;
 long long nextWakeMs=0;UINT_PTR expiryTimerId=0;DWORD expiryTimerError=0;unsigned timerFired=0;
 LRESULT CALLBACK Procedure(HWND,UINT,WPARAM,LPARAM);
 void OpenSettings();
+void OpenHistory();
+void TranslateHistory();
 void RequestCloud(bool manual=false);
 void UpdateState();
 void PositionStrip();
@@ -71,6 +81,12 @@ bool IsStale(const Data& s,long long now){return !s.snapshot.observed || now-s.s
 int px(int x) { return MulDiv(x, static_cast<int>(dpi), 96); }
 std::wstring Lower(std::wstring s) { for (auto& c : s) c = static_cast<wchar_t>(std::towlower(c)); return s; }
 bool EndsWith(const std::wstring& s, const wchar_t* suffix) { size_t n = wcslen(suffix); return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0; }
+std::filesystem::path HistoryDirectory(const quota::Settings& config){return config.historyDirectory.empty()?std::filesystem::path(settingsPath).parent_path()/L"history":std::filesystem::path(config.historyDirectory);}
+void ConfigureHistory(const quota::Settings& config){historyStore.configure(config.historyEnabled,HistoryDirectory(config));}
+std::wstring HistoryError(const std::string& error){
+    if(error.empty())return {};
+    return Ui(error.find("read")!=std::string::npos?L"无法读取额度变化，请检查日志目录和权限。":L"无法记录额度变化，请检查日志目录和权限。");
+}
 
 quota::Window CurrentWindow(quota::Window w, long long now) {
     // A reset is not evidence that 100% is available. Clear until a newer server snapshot arrives.
@@ -100,6 +116,7 @@ void WriteStatus(const Data& s) {
     json += ",\"online\":"+std::string(config.online?"true":"false")+",\"refreshing\":"+std::string(s.refreshing?"true":"false");
     json += ",\"source\":\""+std::string(s.fromServer?"account":"local-event")+"\",\"last_success_ms\":"+std::to_string(s.lastSuccess);
     json += ",\"settings_open\":"+std::string(settingsWindow?"true":"false");
+    json += ",\"history_open\":"+std::string(historyWindow?"true":"false")+",\"history_enabled\":"+std::string(config.historyEnabled?"true":"false");
     json += ",\"next_wake_ms\":"+std::to_string(nextWakeMs)+",\"timer_id\":"+std::to_string(expiryTimerId)+",\"timer_error\":"+std::to_string(expiryTimerError)+",\"timer_fired\":"+std::to_string(timerFired);
     json += ",\"events\":" + std::to_string(s.events) + ",\"bytes_read\":" + std::to_string(s.bytesRead);
     json += ",\"notifications\":" + std::to_string(s.notifications) + ",\"cached_files\":" + std::to_string(s.cachedFiles);
@@ -157,7 +174,11 @@ void WatchFiles() {
         std::lock_guard<std::mutex> lock(dataMutex);
         if(quota::Apply(snapshot,data.localSnapshot))++data.events;
         // 本地事件时间是写盘时间，不保证配额字段新鲜；在线成功后只用账户结果。
-        if((!online||!data.lastSuccess)&&quota::Apply(snapshot,data.snapshot))data.fromServer=false;
+        if((!online||!data.lastSuccess)&&quota::Apply(snapshot,data.snapshot)){
+            data.fromServer=false;
+            // 只记录真正采纳的额度事件；UI 重绘、过期提示与文件重扫不产生新记录。
+            historyStore.record(snapshot,"local-event");
+        }
     };
     unsigned long long publishedEvents = static_cast<unsigned long long>(-1);
     auto publish = [&]() {
@@ -193,7 +214,7 @@ void WatchFiles() {
             if (reset) {
                 afterAuth = quota::NowMs(); follower.clear();
                 ++accountGeneration;
-                { std::lock_guard<std::mutex> lock(dataMutex); data.snapshot = {};data.localSnapshot={};data.error=0;data.fromServer=false;data.lastSuccess=0; }
+                { std::lock_guard<std::mutex> lock(dataMutex); historyStore.reset();data.snapshot = {};data.localSnapshot={};data.error=0;data.fromServer=false;data.lastSuccess=0; }
                 RequestCloud();
                 publishedEvents = static_cast<unsigned long long>(-1); publish();
             }
@@ -467,6 +488,7 @@ void UpdateState() {
     if (week.resets) tipText += Ui(L"\n周重置时间：") + LocalTime(week.resets * 1000);
     if (stale) tipText += Ui(L"\n灰色数值是旧快照，等待本机新事件。");
     if (s.error) tipText += Ui(L"\n本机日志监听不可用，错误码：") + std::to_wstring(s.error);
+    auto historyError=HistoryError(historyStore.error());if(!historyError.empty())tipText+=L"\n"+historyError;
     tipText += Ui(L"\n右键可打开配置或立即刷新；双击立即刷新。");
     if (tooltip) {
         TOOLINFOW info{sizeof(info)}; info.hwnd = window; info.uId = reinterpret_cast<UINT_PTR>(window); info.lpszText = const_cast<wchar_t*>(tipText.c_str());
@@ -485,6 +507,7 @@ void UpdateState() {
             HWND label=GetDlgItem(settingsWindow,item.first);if(quota_ui::caption(label)!=item.second){SetWindowTextW(label,item.second.c_str());changed=true;}
         }
         if(changed)InvalidateRect(settingsWindow,nullptr,FALSE);
+        SetWindowTextW(GetDlgItem(settingsWindow,213),historyError.c_str());
     }
 }
 // 所有查询都由同一个工作线程合并，按钮只发事件，不阻塞 UI。
@@ -507,7 +530,7 @@ void CloudLoop(){
             {std::lock_guard<std::mutex> lock(dataMutex);
                 data.refreshing=false;
                 if(generation==accountGeneration.load()){
-                    if(result.ok){data.snapshot=result.snapshot;data.fromServer=true;data.lastSuccess=result.snapshot.observed;data.queryError.clear();failures=0;}
+                    if(result.ok){data.snapshot=result.snapshot;data.fromServer=true;data.lastSuccess=result.snapshot.observed;data.queryError.clear();failures=0;historyStore.record(result.snapshot,"account");}
                     else {data.queryError=result.error;++failures;}
                 }
             }
@@ -525,10 +548,175 @@ void CloudLoop(){
     }
 }
 
+// 查看器持有自己的字体与有界快照缓存；关闭窗口后释放，不增加轮询或网页运行时。
+std::wstring HistoryValue(const quota::Window& value,const std::optional<double>& change){
+    if(!value.present)return L"—";
+    wchar_t text[100]{};
+    if(change)swprintf_s(text,L"%.1f%% / %+.1f %ls",std::clamp(100.0-value.used,0.0,100.0),*change,Ui(L"百分点"));
+    else swprintf_s(text,L"%.1f%% / —",std::clamp(100.0-value.used,0.0,100.0));
+    return text;
+}
+std::wstring HistorySource(const quota::HistoryEntry& entry){
+    auto source=Ui(entry.source=="account"?L"账户":L"本地事件");
+    auto kind=Ui(entry.kind=="baseline"?L"基线":entry.kind=="reset"?L"重置":L"变化");
+    return std::wstring(source)+L" / "+kind;
+}
+void PopulateHistory(){
+    if(!historyWindow)return;
+    HWND list=GetDlgItem(historyWindow,401);SendMessageW(list,WM_SETREDRAW,FALSE,0);ListView_DeleteAllItems(list);
+    int row=0;
+    for(auto it=historyRows.entries.rbegin();it!=historyRows.entries.rend();++it){
+        std::wstring values[]{LocalTime(it->recorded),HistoryValue(it->snapshot.fiveHour,it->fiveChange),HistoryValue(it->snapshot.weekly,it->weeklyChange),HistorySource(*it)};
+        LVITEMW item{};item.mask=LVIF_TEXT;item.iItem=row;item.pszText=values[0].data();SendMessageW(list,LVM_INSERTITEMW,0,reinterpret_cast<LPARAM>(&item));
+        for(int column=1;column<4;++column){item.iSubItem=column;item.pszText=values[column].data();SendMessageW(list,LVM_SETITEMTEXTW,row,reinterpret_cast<LPARAM>(&item));}
+        ++row;
+    }
+    SendMessageW(list,WM_SETREDRAW,TRUE,0);InvalidateRect(list,nullptr,TRUE);
+    std::wstring summary;
+    if(!historyRows.error.empty())summary=HistoryError(historyRows.error);
+    else if(historyRows.entries.empty())summary=Ui(L"暂无额度变化记录");
+    else summary=std::to_wstring(historyRows.entries.size())+L" "+Ui(L"条记录")+L" · "+Ui(historyRows.truncated?L"已截取最近记录":L"仅显示最近 30 日，最多 2000 条");
+    if(!GetPreferences().historyEnabled)summary+=L" · "+std::wstring(Ui(L"已暂停记录，现有记录仍可查看"));
+    SetWindowTextW(GetDlgItem(historyWindow,404),summary.c_str());
+    SetWindowTextW(GetDlgItem(historyWindow,406),HistoryDirectory(GetPreferences()).c_str());
+    InvalidateRect(GetDlgItem(historyWindow,405),nullptr,FALSE);
+}
+void RefreshHistory(){historyRows=historyStore.read();PopulateHistory();}
+void TranslateHistory(){
+    if(!historyWindow)return;
+    SetWindowTextW(historyWindow,Ui(L"Codex 配额 — 额度变化"));
+    SetWindowTextW(GetDlgItem(historyWindow,402),Ui(historyChart?L"列表":L"图表"));
+    SetWindowTextW(GetDlgItem(historyWindow,403),Ui(L"刷新记录"));
+    const wchar_t* labels[]{L"时间",L"5h 剩余 / 变化",L"周剩余 / 变化",L"来源 / 事件"};
+    for(int column=0;column<4;++column){LVCOLUMNW value{};value.mask=LVCF_TEXT;value.pszText=const_cast<wchar_t*>(Ui(labels[column]));SendMessageW(GetDlgItem(historyWindow,401),LVM_SETCOLUMNW,column,reinterpret_cast<LPARAM>(&value));}
+    PopulateHistory();
+}
+void LayoutHistory(HWND h){
+    RECT bounds{};GetClientRect(h,&bounds);int margin=historyTheme.px(20),button=historyTheme.px(120),gap=historyTheme.px(12);
+    auto move=[&](int id,int x,int y,int w,int height){SetWindowPos(GetDlgItem(h,id),nullptr,x,y,std::max(1,w),std::max(1,height),SWP_NOZORDER|SWP_NOACTIVATE);SendMessageW(GetDlgItem(h,id),WM_SETFONT,reinterpret_cast<WPARAM>(historyTheme.body),TRUE);};
+    move(402,margin,margin,button,historyTheme.px(34));move(403,margin+button+gap,margin,button+historyTheme.px(30),historyTheme.px(34));
+    move(406,margin,historyTheme.px(64),bounds.right-2*margin,historyTheme.px(24));
+    for(int id:{401,405})move(id,margin,historyTheme.px(100),bounds.right-2*margin,bounds.bottom-historyTheme.px(160));
+    move(404,margin,bounds.bottom-historyTheme.px(50),bounds.right-2*margin,historyTheme.px(40));
+    int available=std::max<int>(historyTheme.px(720),bounds.right-2*margin-GetSystemMetrics(SM_CXVSCROLL)-4);
+    for(int column=0;column<4;++column)ListView_SetColumnWidth(GetDlgItem(h,401),column,available*(column==0?24:column==3?22:27)/100);
+}
+void PaintHistoryChart(HWND h,HDC target){
+    RECT bounds{};GetClientRect(h,&bounds);if(bounds.right<=0||bounds.bottom<=0)return;
+    HDC dc=CreateCompatibleDC(target);HBITMAP bitmap=CreateCompatibleBitmap(target,bounds.right,bounds.bottom);auto oldBitmap=SelectObject(dc,bitmap);FillRect(dc,&bounds,historyTheme.background);
+    using namespace quota_ui;
+    int left=historyTheme.px(52),right=std::max<int>(left+1,bounds.right-historyTheme.px(20)),top=historyTheme.px(40),bottom=std::max<int>(top+1,bounds.bottom-historyTheme.px(52));
+    auto label=[&](const std::wstring& value,RECT area,COLORREF color,UINT flags=DT_LEFT|DT_VCENTER|DT_SINGLELINE){text(dc,value,area,historyTheme.smallFont,color,flags);};
+    label(Ui(L"5 小时剩余"),{left,0,left+historyTheme.px(220),top},Accent);
+    label(Ui(L"本周剩余"),{left+historyTheme.px(230),0,right,top},Warning);
+    HPEN grid=CreatePen(PS_SOLID,1,Border);auto oldPen=SelectObject(dc,grid);
+    for(int percent:{0,50,100}){int y=bottom-(bottom-top)*percent/100;MoveToEx(dc,left,y,nullptr);LineTo(dc,right,y);label(std::to_wstring(percent)+L"%",{0,y-historyTheme.px(10),left-historyTheme.px(8),y+historyTheme.px(10)},Muted,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);}
+    SelectObject(dc,oldPen);DeleteObject(grid);
+    if(historyRows.entries.empty())label(Ui(L"暂无额度变化记录"),{left,top,right,bottom},Muted,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    else{
+        auto first=historyRows.entries.front().recorded,last=historyRows.entries.back().recorded,span=std::max(1LL,last-first);
+        for(int series=0;series<2;++series){
+            HPEN pen=CreatePen(PS_SOLID,std::max(1,historyTheme.px(2)),series?Warning:Accent);auto previousPen=SelectObject(dc,pen);bool connected=false;
+            for(const auto& entry:historyRows.entries){
+                const auto& value=series?entry.snapshot.weekly:entry.snapshot.fiveHour;const auto& change=series?entry.weeklyChange:entry.fiveChange;
+                if(!value.present){connected=false;continue;}
+                int x=left+static_cast<int>((right-left)*static_cast<double>(entry.recorded-first)/span);
+                int y=bottom-static_cast<int>((bottom-top)*std::clamp(100.0-value.used,0.0,100.0)/100.0);
+                // 基线、周期重置及缺失窗口都断开旧线段；不把周期恢复当作消耗。
+                if(connected&&entry.kind=="change"&&change)LineTo(dc,x,y);else MoveToEx(dc,x,y,nullptr);
+                SetPixelV(dc,x,y,series?Warning:Accent);connected=true;
+            }
+            SelectObject(dc,previousPen);DeleteObject(pen);
+        }
+        label(LocalTime(first),{left,bottom+historyTheme.px(8),right,bounds.bottom},Muted);
+        label(LocalTime(last),{left,bottom+historyTheme.px(8),right,bounds.bottom},Muted,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    }
+    BitBlt(target,0,0,bounds.right,bounds.bottom,dc,0,0,SRCCOPY);SelectObject(dc,oldBitmap);DeleteObject(bitmap);DeleteDC(dc);
+}
+LRESULT CALLBACK HistoryChartProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
+    if(message==WM_PAINT){PAINTSTRUCT paint{};HDC dc=BeginPaint(h,&paint);PaintHistoryChart(h,dc);EndPaint(h,&paint);return 0;}
+    if(message==WM_PRINTCLIENT){PaintHistoryChart(h,reinterpret_cast<HDC>(wp));return 0;}
+    if(message==WM_ERASEBKGND)return 1;
+    return DefWindowProcW(h,message,wp,lp);
+}
+LRESULT CALLBACK HistoryProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
+    switch(message){
+    case WM_CREATE:{
+        historyTheme.create(GetDpiForWindow(h));
+        auto control=[&](const wchar_t* type,const wchar_t* title,DWORD style,int id){return CreateWindowExW(0,type,title,WS_CHILD|WS_VISIBLE|style,0,0,100,40,h,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);};
+        HWND list=control(WC_LISTVIEWW,L"",LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP,401);
+        ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
+        ListView_SetBkColor(list,quota_ui::Background);ListView_SetTextBkColor(list,quota_ui::Background);ListView_SetTextColor(list,quota_ui::Text);
+        SetWindowTheme(list,L"DarkMode_Explorer",nullptr);
+        for(int column=0;column<4;++column){LVCOLUMNW value{};value.mask=LVCF_TEXT|LVCF_WIDTH;value.cx=200;value.pszText=const_cast<wchar_t*>(L"");SendMessageW(list,LVM_INSERTCOLUMNW,column,reinterpret_cast<LPARAM>(&value));}
+        control(L"BUTTON",Ui(L"图表"),BS_OWNERDRAW|WS_TABSTOP,402);control(L"BUTTON",Ui(L"刷新记录"),BS_OWNERDRAW|WS_TABSTOP,403);
+        control(L"STATIC",L"",SS_LEFT|SS_NOPREFIX,404);control(L"STATIC",L"",SS_LEFT|SS_NOPREFIX|SS_PATHELLIPSIS,406);
+        control(L"QuotaHistoryChart",L"",0,405);ShowWindow(GetDlgItem(h,405),SW_HIDE);return 0;
+    }
+    case WM_SIZE:LayoutHistory(h);return 0;
+    case WM_PAINT:{PAINTSTRUCT paint{};HDC dc=BeginPaint(h,&paint);RECT r{};GetClientRect(h,&r);FillRect(dc,&r,historyTheme.background);EndPaint(h,&paint);return 0;}
+    case WM_ERASEBKGND:return 1;
+    case WM_CTLCOLORSTATIC:SetTextColor(reinterpret_cast<HDC>(wp),quota_ui::Muted);SetBkColor(reinterpret_cast<HDC>(wp),quota_ui::Background);return reinterpret_cast<LRESULT>(historyTheme.background);
+    case WM_DRAWITEM:{auto& item=*reinterpret_cast<DRAWITEMSTRUCT*>(lp);FillRect(item.hDC,&item.rcItem,historyTheme.field);FrameRect(item.hDC,&item.rcItem,historyTheme.panel);quota_ui::text(item.hDC,quota_ui::caption(item.hwndItem),item.rcItem,historyTheme.body,quota_ui::Text,DT_CENTER|DT_VCENTER|DT_SINGLELINE);return TRUE;}
+    case WM_COMMAND:
+        if(LOWORD(wp)==403){RefreshHistory();return 0;}
+        if(LOWORD(wp)==402){historyChart=!historyChart;ShowWindow(GetDlgItem(h,401),historyChart?SW_HIDE:SW_SHOW);ShowWindow(GetDlgItem(h,405),historyChart?SW_SHOW:SW_HIDE);SetWindowTextW(GetDlgItem(h,402),Ui(historyChart?L"列表":L"图表"));return 0;}break;
+    case WM_DPICHANGED:{historyTheme.create(HIWORD(wp));auto rect=reinterpret_cast<RECT*>(lp);SetWindowPos(h,nullptr,rect->left,rect->top,rect->right-rect->left,rect->bottom-rect->top,SWP_NOZORDER|SWP_NOACTIVATE);LayoutHistory(h);return 0;}
+    case WM_CLOSE:DestroyWindow(h);return 0;
+    case WM_DESTROY:historyWindow=nullptr;historyRows={};historyTheme.release();historyChart=false;AtomicStatus(GetData());return 0;
+    }
+    return DefWindowProcW(h,message,wp,lp);
+}
+void OpenHistory(){
+    if(headless)return;
+    if(historyWindow){ShowWindow(historyWindow,SW_RESTORE);SetForegroundWindow(historyWindow);RefreshHistory();return;}
+    WNDCLASSEXW chart{sizeof(chart)};chart.hInstance=instance;chart.lpfnWndProc=HistoryChartProcedure;chart.lpszClassName=L"QuotaHistoryChart";chart.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassExW(&chart);
+    std::wstring name=L"QuotaHistory_"+windowClass;WNDCLASSEXW cls{sizeof(cls)};cls.hInstance=instance;cls.lpfnWndProc=HistoryProcedure;cls.lpszClassName=name.c_str();cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassExW(&cls);
+    UINT d=GetDpiForSystem();RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
+    historyWindow=CreateWindowExW(0,name.c_str(),Ui(L"Codex 配额 — 额度变化"),WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,std::min<int>(MulDiv(1040,d,96),work.right-work.left),std::min<int>(MulDiv(660,d,96),work.bottom-work.top),nullptr,nullptr,instance,nullptr);
+    if(historyWindow){BOOL dark=TRUE;DwmSetWindowAttribute(historyWindow,DWMWA_USE_IMMERSIVE_DARK_MODE,&dark,sizeof(dark));LayoutHistory(historyWindow);TranslateHistory();RefreshHistory();ShowWindow(historyWindow,SW_SHOW);SetWindowPos(historyWindow,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW);SetForegroundWindow(historyWindow);AtomicStatus(GetData());}
+}
+
+void LayoutSettings(HWND h){
+    quota_ui::layout(h);const auto& theme=quota_ui::theme;
+    auto move=[&](int id,int x,int y,int width,int height){auto r=theme.rect(x,y,width,height);SetWindowPos(GetDlgItem(h,id),nullptr,r.left,r.top,r.right-r.left,r.bottom-r.top,SWP_NOZORDER|SWP_NOACTIVATE);SendMessageW(GetDlgItem(h,id),WM_SETFONT,reinterpret_cast<WPARAM>(theme.body),TRUE);};
+    move(209,24,592,572,30);move(210,36,653,430,24);move(304,486,645,110,36);move(305,24,695,220,36);
+    move(213,24,734,572,24);move(207,24,764,572,26);move(301,24,804,132,36);move(302,346,804,152,36);move(303,512,804,84,36);
+    RECT bounds{};GetClientRect(h,&bounds);int total=theme.px(858);settingsScroll=std::clamp(settingsScroll,0,std::max<int>(0,total-bounds.bottom));
+    SCROLLINFO scroll{sizeof(scroll)};scroll.fMask=SIF_RANGE|SIF_PAGE|SIF_POS;scroll.nMax=total-1;scroll.nPage=static_cast<UINT>(bounds.bottom);scroll.nPos=settingsScroll;SetScrollInfo(h,SB_VERT,&scroll,TRUE);
+    // 小屏幕或高 DPI 时滚动整个设置内容，让新增目录与保存按钮仍可到达。
+    if(settingsScroll)for(HWND child=GetWindow(h,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)){
+        RECT r{};GetWindowRect(child,&r);MapWindowPoints(nullptr,h,reinterpret_cast<POINT*>(&r),2);SetWindowPos(child,nullptr,r.left,r.top-settingsScroll,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
+    }
+}
+LRESULT CALLBACK HistoryToggleProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR){
+    if(message==WM_PAINT||message==WM_PRINTCLIENT){
+        PAINTSTRUCT paint{};HDC dc=message==WM_PAINT?BeginPaint(h,&paint):reinterpret_cast<HDC>(wp);const auto& theme=quota_ui::theme;
+        RECT bounds{};GetClientRect(h,&bounds);FillRect(dc,&bounds,theme.background);bool checked=SendMessageW(h,BM_GETCHECK,0,0)==BST_CHECKED;
+        RECT label=bounds;label.right-=theme.px(50);quota_ui::text(dc,quota_ui::caption(h),label,theme.body,quota_ui::Text);
+        RECT track{bounds.right-theme.px(36),(bounds.bottom-theme.px(20))/2,bounds.right,(bounds.bottom+theme.px(20))/2};quota_ui::rounded(dc,track,checked?quota_ui::Accent:quota_ui::Border,quota_ui::Border,20);
+        int x=checked?track.right-theme.px(17):track.left+theme.px(3);quota_ui::rounded(dc,{x,track.top+theme.px(3),x+theme.px(14),track.bottom-theme.px(3)},checked?quota_ui::AccentText:quota_ui::Text,checked?quota_ui::AccentText:quota_ui::Text,14);
+        if(GetFocus()==h){InflateRect(&bounds,-1,-1);DrawFocusRect(dc,&bounds);}if(message==WM_PAINT)EndPaint(h,&paint);return 0;
+    }
+    if(message==WM_ERASEBKGND)return 1;
+    if(message==WM_SETFOCUS||message==WM_KILLFOCUS||message==BM_SETCHECK)InvalidateRect(h,nullptr,FALSE);
+    if(message==WM_NCDESTROY)RemoveWindowSubclass(h,HistoryToggleProcedure,id);
+    return DefSubclassProc(h,message,wp,lp);
+}
+int CALLBACK HistoryFolderCallback(HWND h,UINT message,LPARAM,LPARAM directory){if(message==BFFM_INITIALIZED&&directory)SendMessageW(h,BFFM_SETSELECTIONW,TRUE,directory);return 0;}
+void BrowseHistoryDirectory(HWND h){
+    wchar_t directory[32768]{};GetDlgItemTextW(h,210,directory,32768);auto current=directory[0]?std::wstring(directory):HistoryDirectory(GetPreferences()).wstring();
+    BROWSEINFOW browse{};browse.hwndOwner=h;browse.lpszTitle=Ui(L"选择额度日志目录");browse.ulFlags=BIF_RETURNONLYFSDIRS|BIF_EDITBOX|BIF_VALIDATE;browse.lpfn=HistoryFolderCallback;browse.lParam=reinterpret_cast<LPARAM>(current.c_str());
+    auto item=SHBrowseForFolderW(&browse);if(!item)return;
+    if(SHGetPathFromIDListEx(item,directory,32768,0))SetDlgItemTextW(h,210,directory);
+    IMalloc* allocator=nullptr;if(SUCCEEDED(SHGetMalloc(&allocator))){allocator->Free(item);allocator->Release();}
+}
+
 // 主面板采用轻量 GDI 双缓冲；字体、画刷只在设置窗口存活期间保留。
 void PaintSettings(HWND h,HDC target){
     using namespace quota_ui;RECT r{};GetClientRect(h,&r);if(r.right<=0||r.bottom<=0)return;
     HDC dc=CreateCompatibleDC(target);HBITMAP bitmap=CreateCompatibleBitmap(target,r.right,r.bottom);auto old=SelectObject(dc,bitmap);FillRect(dc,&r,theme.background);
+    SetViewportOrgEx(dc,0,-settingsScroll,nullptr);
     text(dc,Ui(L"Codex 配额"),theme.rect(24,20,360,32),theme.title,Text);
     text(dc,Ui(L"刷新与显示设置"),theme.rect(24,55,380,22),theme.smallFont,Muted);
     auto s=GetData();auto now=quota::NowMs();bool stale=IsStale(s,now);
@@ -553,16 +741,21 @@ void PaintSettings(HWND h,HDC target){
     text(dc,Ui(L"1–120 分钟"),theme.rect(322,411,274,20),theme.smallFont,Muted);
     text(dc,Ui(L"显示方式"),theme.rect(24,508,142,26),theme.body,Text);
     text(dc,Ui(L"界面语言"),theme.rect(24,552,142,26),theme.body,Text);
+    text(dc,Ui(L"日志目录"),theme.rect(24,622,572,22),theme.smallFont,Muted);
+    rounded(dc,theme.rect(24,645,450,36),Field,GetFocus()==GetDlgItem(h,210)?Accent:Border);
+    text(dc,Ui(L"留空使用默认 history 目录"),theme.rect(260,697,336,32),theme.smallFont,Muted,DT_LEFT|DT_WORDBREAK);
+    SetViewportOrgEx(dc,0,0,nullptr);
     BitBlt(target,0,0,r.right,r.bottom,dc,0,0,SRCCOPY);SelectObject(dc,old);DeleteObject(bitmap);DeleteDC(dc);
 }
 // 只改固定文案和下拉选项，保留刷新间隔等尚未保存的输入。
 void TranslateSettings(HWND h){
     SetWindowTextW(h,Ui(L"Codex 配额 — 配置"));
-    for(const auto& item:{std::pair<int,const wchar_t*>{201,L"自动查询账户额度"},{203,L"仅在 Codex 运行时查询"},{301,L"立即刷新"},{302,L"保存并应用"},{303,L"关闭"}})SetWindowTextW(GetDlgItem(h,item.first),Ui(item.second));
+    for(const auto& item:{std::pair<int,const wchar_t*>{201,L"自动查询账户额度"},{203,L"仅在 Codex 运行时查询"},{209,L"记录额度变化"},{304,L"浏览…"},{305,L"查看额度变化"},{301,L"立即刷新"},{302,L"保存并应用"},{303,L"关闭"}})SetWindowTextW(GetDlgItem(h,item.first),Ui(item.second));
     HWND combo=GetDlgItem(h,204);LRESULT selected=SendMessageW(combo,CB_GETCURSEL,0,0);SendMessageW(combo,CB_RESETCONTENT,0,0);
     for(auto text:{L"仅任务栏数字",L"任务栏 + Codex 顶部",L"任务栏 + Codex 左侧"})SendMessageW(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(Ui(text)));
     SendMessageW(combo,CB_SETCURSEL,selected,0);InvalidateRect(h,nullptr,FALSE);
     paintedText.clear();if(window)InvalidateRect(window,nullptr,FALSE);
+    TranslateHistory();
 }
 LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
     switch(message){
@@ -582,18 +775,29 @@ LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
         SendMessageW(language,CB_SETCURSEL,config.english?1:0,0);
         SendMessageW(GetDlgItem(h,201),BM_SETCHECK,config.online?BST_CHECKED:BST_UNCHECKED,0);
         SendMessageW(GetDlgItem(h,203),BM_SETCHECK,config.onlyWithCodex?BST_CHECKED:BST_UNCHECKED,0);
+        HWND enabled=control(L"BUTTON",Ui(L"记录额度变化"),BS_AUTOCHECKBOX|WS_TABSTOP,209);SetWindowSubclass(enabled,HistoryToggleProcedure,1,0);SendMessageW(enabled,BM_SETCHECK,config.historyEnabled?BST_CHECKED:BST_UNCHECKED,0);
+        control(L"EDIT",config.historyDirectory.c_str(),ES_AUTOHSCROLL|WS_TABSTOP,210);
+        control(L"BUTTON",Ui(L"浏览…"),BS_OWNERDRAW|WS_TABSTOP,304);control(L"BUTTON",Ui(L"查看额度变化"),BS_OWNERDRAW|WS_TABSTOP,305);
+        control(L"STATIC",L"",SS_LEFT|SS_NOPREFIX,213);
         control(L"STATIC",Ui(L"等待账户数据…"),SS_LEFT|SS_NOPREFIX,206);
         control(L"STATIC",L"-",SS_LEFT|SS_NOPREFIX,211);control(L"STATIC",L"-",SS_LEFT|SS_NOPREFIX,212);
         control(L"STATIC",Ui(L"设置将在保存后生效"),SS_LEFT|SS_NOPREFIX,207);
         control(L"BUTTON",Ui(L"立即刷新"),BS_OWNERDRAW|WS_TABSTOP,301);
         control(L"BUTTON",Ui(L"保存并应用"),BS_OWNERDRAW|WS_TABSTOP,302);
         control(L"BUTTON",Ui(L"关闭"),BS_OWNERDRAW|WS_TABSTOP,303);
-        quota_ui::layout(h);
+        settingsScroll=0;LayoutSettings(h);
         return 0;
     }
     case WM_PAINT:{PAINTSTRUCT p{};HDC dc=BeginPaint(h,&p);PaintSettings(h,dc);EndPaint(h,&p);return 0;}
     case WM_PRINTCLIENT:PaintSettings(h,reinterpret_cast<HDC>(wp));return 0;
     case WM_ERASEBKGND:return 1;
+    case WM_SIZE:LayoutSettings(h);return 0;
+    case WM_VSCROLL:{
+        SCROLLINFO scroll{sizeof(scroll)};scroll.fMask=SIF_ALL;GetScrollInfo(h,SB_VERT,&scroll);int next=settingsScroll;
+        switch(LOWORD(wp)){case SB_LINEUP:next-=quota_ui::theme.px(30);break;case SB_LINEDOWN:next+=quota_ui::theme.px(30);break;case SB_PAGEUP:next-=scroll.nPage;break;case SB_PAGEDOWN:next+=scroll.nPage;break;case SB_THUMBTRACK:next=scroll.nTrackPos;break;}
+        settingsScroll=next;LayoutSettings(h);InvalidateRect(h,nullptr,FALSE);return 0;
+    }
+    case WM_MOUSEWHEEL:settingsScroll-=GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA*quota_ui::theme.px(60);LayoutSettings(h);InvalidateRect(h,nullptr,FALSE);return 0;
     case WM_DRAWITEM:if(quota_ui::drawItem(*reinterpret_cast<DRAWITEMSTRUCT*>(lp)))return TRUE;break;
     case WM_MEASUREITEM:if(reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->CtlID==204||reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->CtlID==208){reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->itemHeight=quota_ui::theme.px(32);return TRUE;}break;
     case WM_CTLCOLORSTATIC:{
@@ -605,13 +809,15 @@ LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
     case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:SetTextColor(reinterpret_cast<HDC>(wp),quota_ui::Text);SetBkColor(reinterpret_cast<HDC>(wp),quota_ui::Field);return reinterpret_cast<LRESULT>(quota_ui::theme.field);
     case WM_DPICHANGED:{
         // 换屏时只重建设置窗口的字体与布局，不触碰用户输入或刷新配置。
-        quota_ui::theme.create(HIWORD(wp));RECT* r=reinterpret_cast<RECT*>(lp);SetWindowPos(h,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER|SWP_NOACTIVATE);quota_ui::layout(h);InvalidateRect(h,nullptr,FALSE);return 0;
+        quota_ui::theme.create(HIWORD(wp));RECT* r=reinterpret_cast<RECT*>(lp);SetWindowPos(h,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER|SWP_NOACTIVATE);LayoutSettings(h);InvalidateRect(h,nullptr,FALSE);return 0;
     }
     // 保持原生 Tab 顺序与 Enter 保存语义，外观自绘不改变键盘操作。
     case DM_GETDEFID:return MAKELRESULT(302,DC_HASDEFID);
     case WM_COMMAND:
         if(LOWORD(wp)==301){RefreshNow();return 0;}
         if(LOWORD(wp)==303){DestroyWindow(h);return 0;}
+        if(LOWORD(wp)==304){BrowseHistoryDirectory(h);return 0;}
+        if(LOWORD(wp)==305){OpenHistory();return 0;}
         if(LOWORD(wp)==302){
             auto config=GetPreferences();BOOL a=FALSE,b=FALSE;
             config.intervalSeconds=static_cast<int>(GetDlgItemInt(h,202,&a,FALSE));config.staleMinutes=static_cast<int>(GetDlgItemInt(h,205,&b,FALSE));
@@ -620,8 +826,12 @@ LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
             config.onlyWithCodex=SendMessageW(GetDlgItem(h,203),BM_GETCHECK,0,0)==BST_CHECKED;
             LRESULT selected=SendMessageW(GetDlgItem(h,204),CB_GETCURSEL,0,0);config.showInCodex=selected>0;config.leftSide=selected==2;
             config.english=SendMessageW(GetDlgItem(h,208),CB_GETCURSEL,0,0)==1;
+            config.historyEnabled=SendMessageW(GetDlgItem(h,209),BM_GETCHECK,0,0)==BST_CHECKED;
+            wchar_t directory[32768]{};GetDlgItemTextW(h,210,directory,32768);config.historyDirectory=directory;
+            if(config.historyEnabled){std::string error;if(!HistoryDirectory(config).is_absolute()||!quota::HistoryStore::ValidateDirectory(HistoryDirectory(config),error)){SetWindowTextW(GetDlgItem(h,207),Ui(L"日志目录须为可写的绝对路径。"));return 0;}}
             if(!quota::SaveSettings(settingsPath,config)){SetWindowTextW(GetDlgItem(h,207),Ui(L"无法保存本机配置，请检查文件权限。"));return 0;}
             {std::lock_guard<std::mutex> lock(preferencesMutex);preferences=config;}showInCodex=config.showInCodex;leftSide=config.leftSide;
+            ConfigureHistory(config);
             if(!config.online){std::lock_guard<std::mutex> lock(dataMutex);if(data.localSnapshot.observed){data.snapshot=data.localSnapshot;data.fromServer=false;}}
             TranslateSettings(h);lastVisible=false;PositionStrip();UpdateState();RequestCloud();SetWindowTextW(GetDlgItem(h,207),Ui(L"已保存并应用。"));return 0;
         }
@@ -635,8 +845,9 @@ void OpenSettings(){
     if(headless)return;if(settingsWindow){ShowWindow(settingsWindow,SW_RESTORE);SetForegroundWindow(settingsWindow);return;}
     std::wstring name=L"QuotaSettings_"+windowClass;
     WNDCLASSEXW cls{sizeof(cls)};cls.hInstance=instance;cls.lpfnWndProc=SettingsProcedure;cls.lpszClassName=name.c_str();cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassExW(&cls);
-    UINT d=GetDpiForSystem();RECT bounds{0,0,MulDiv(620,d,96),MulDiv(680,d,96)};AdjustWindowRectExForDpi(&bounds,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,FALSE,0,d);
-    settingsWindow=CreateWindowExW(0,name.c_str(),Ui(L"Codex 配额 — 配置"),WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,bounds.right-bounds.left,bounds.bottom-bounds.top,nullptr,nullptr,instance,nullptr);
+    UINT d=GetDpiForSystem();RECT bounds{0,0,MulDiv(620,d,96),MulDiv(858,d,96)};DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL;AdjustWindowRectExForDpi(&bounds,style,FALSE,0,d);
+    RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
+    settingsWindow=CreateWindowExW(0,name.c_str(),Ui(L"Codex 配额 — 配置"),style,CW_USEDEFAULT,CW_USEDEFAULT,bounds.right-bounds.left,std::min(bounds.bottom-bounds.top,work.bottom-work.top),nullptr,nullptr,instance,nullptr);
     if(settingsWindow){
         BOOL dark=TRUE;DwmSetWindowAttribute(settingsWindow,DWMWA_USE_IMMERSIVE_DARK_MODE,&dark,sizeof(dark));
         // 隐藏启动会覆盖第一次 ShowWindow；用户明确打开配置时强制显示该窗口。
@@ -653,6 +864,7 @@ void Command(UINT choice) {
     } else if (choice == 3) RefreshNow();
     else if (choice == 4) PostMessageW(controller, WM_CLOSE, 0, 0);
     else if (choice == 7) OpenSettings();
+    else if (choice == 8) OpenHistory();
     else if (choice == 5 || choice == 6) {
         showInCodex = choice == 6;
         WritePrivateProfileStringW(L"display", L"surface", showInCodex ? L"taskbar-and-codex" : L"taskbar", settingsPath.c_str());
@@ -671,6 +883,7 @@ void Menu() {
     AppendMenuW(menu, MF_STRING | (showInCodex ? MF_CHECKED : 0), 6, Ui(L"任务栏 + Codex 内显示"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 7, Ui(L"配置…"));
+    AppendMenuW(menu, MF_STRING, 8, Ui(L"查看变化…"));
     AppendMenuW(menu, MF_STRING, 3, Ui(L"立即刷新账户 / 本机数据"));
     AppendMenuW(menu, MF_STRING, 4, Ui(L"退出配额条"));
     HWND returnFocus = GetForegroundWindow();
@@ -678,7 +891,7 @@ void Menu() {
     UINT choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, point.x, point.y, 0, controller, nullptr);
     DestroyMenu(menu); Command(choice);
     PostMessageW(controller, WM_NULL, 0, 0);
-    if (choice!=7 && returnFocus && returnFocus != window && IsWindow(returnFocus)) SetForegroundWindow(returnFocus);
+    if (choice!=7 && choice!=8 && returnFocus && returnFocus != window && IsWindow(returnFocus)) SetForegroundWindow(returnFocus);
     PositionStrip();
 }
 LRESULT CALLBACK Procedure(HWND h, UINT message, WPARAM wp, LPARAM lp) {
@@ -706,6 +919,7 @@ LRESULT CALLBACK Procedure(HWND h, UINT message, WPARAM wp, LPARAM lp) {
         closing = true; SetEvent(stopEvent); KillTimer(h, ExpiryTimer);KillTimer(h,RecoveryTimer);UnhookHost();
         if (foregroundHook) UnhookWinEvent(foregroundHook);
         if(settingsWindow)DestroyWindow(settingsWindow);
+        if(historyWindow)DestroyWindow(historyWindow);
         if(window){SetWindowLongPtrW(window,GWLP_HWNDPARENT,0);DestroyWindow(window);}
         if (!headless) RemoveTray();
         PostQuitMessage(0); return 0;
@@ -716,13 +930,12 @@ LRESULT CALLBACK Procedure(HWND h, UINT message, WPARAM wp, LPARAM lp) {
 
 int WINAPI wWinMain(HINSTANCE app, HINSTANCE, PWSTR, int) {
     instance = app;
-    // 本程序只接收数字和列表选择；禁用本 UI 线程的 IME，避免输入法额外模块常驻。
-    ImmDisableIME(0);
+    // 日志目录允许中文路径；保留系统输入法，数字输入仍由 ES_NUMBER 约束。
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     wchar_t profile[32768]; DWORD n = GetEnvironmentVariableW(L"CODEX_HOME", profile, static_cast<DWORD>(std::size(profile)));
     if (n > 0 && n < std::size(profile)) home = profile;
     else { GetEnvironmentVariableW(L"USERPROFILE", profile, static_cast<DWORD>(std::size(profile))); home = std::wstring(profile) + L"\\.codex"; }
-    int argc = 0; auto argv = CommandLineToArgvW(GetCommandLineW(), &argc); bool overridePosition = false, overrideVisibility = false, quit = false, openConfig=false,localOnly=false;
+    int argc = 0; auto argv = CommandLineToArgvW(GetCommandLineW(), &argc); bool overridePosition = false, overrideVisibility = false, quit = false, openConfig=false,openHistory=false,localOnly=false;
     for (int i = 1; i < argc; ++i) {
         std::wstring arg = argv[i];
         if (arg == L"--home" && i + 1 < argc) home = argv[++i];
@@ -733,6 +946,7 @@ int WINAPI wWinMain(HINSTANCE app, HINSTANCE, PWSTR, int) {
         else if (arg == L"--taskbar-and-codex" || arg == L"--codex-only") { showInCodex = true; overrideVisibility = true; }
         else if (arg == L"--quit") quit = true;
         else if (arg == L"--settings") openConfig=true;
+        else if (arg == L"--history") openHistory=true;
         else if (arg == L"--local-only") localOnly=true;
         else if (arg == L"--host-pid" && i+1<argc) explicitHostPid=static_cast<DWORD>(_wtoi(argv[++i]));
     }
@@ -742,12 +956,13 @@ int WINAPI wWinMain(HINSTANCE app, HINSTANCE, PWSTR, int) {
     std::wstring controllerClass=L"QuotaController_"+std::to_wstring(hash)+(headless?L"_headless":L"");
     if (quit) { HWND existing=FindWindowW(controllerClass.c_str(),nullptr);if(!existing)existing=FindWindowW(windowClass.c_str(),nullptr);if(existing)PostMessageW(existing,WM_CLOSE,0,0);return 0; }
     quota::Handle singleton(CreateMutexW(nullptr, FALSE, (L"Local\\" + windowClass).c_str()));
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {if(openConfig)if(HWND existing=FindWindowW(controllerClass.c_str(),nullptr))PostMessageW(existing,WM_COMMAND,7,0);return 0;}
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {if(openConfig||openHistory)if(HWND existing=FindWindowW(controllerClass.c_str(),nullptr))PostMessageW(existing,WM_COMMAND,openHistory?8:7,0);return 0;}
     GetEnvironmentVariableW(L"LOCALAPPDATA", profile, static_cast<DWORD>(std::size(profile)));
     auto settingsDir = std::wstring(profile) + L"\\CodexQuotaStrip";
     if (!headless) CreateDirectoryW(settingsDir.c_str(), nullptr);
     settingsPath = settingsDir + L"\\settings.ini";
     preferences=quota::LoadSettings(settingsPath);if(headless||localOnly)preferences.online=false;
+    ConfigureHistory(preferences);
     if (!headless && !overridePosition) { wchar_t saved[16]; GetPrivateProfileStringW(L"display", L"position", L"top", saved, 16, settingsPath.c_str()); leftSide = std::wstring(saved) == L"left"; }
     if (!headless && !overrideVisibility) { wchar_t saved[32]; GetPrivateProfileStringW(L"display", L"surface", L"taskbar", saved, 32, settingsPath.c_str()); showInCodex = std::wstring(saved) == L"taskbar-and-codex"; }
     preferences.showInCodex=showInCodex;preferences.leftSide=leftSide;
@@ -770,8 +985,9 @@ int WINAPI wWinMain(HINSTANCE app, HINSTANCE, PWSTR, int) {
     UpdateState(); StartWorker();
     cloudWorker=std::thread([]{try{CloudLoop();}catch(...){std::lock_guard<std::mutex> lock(dataMutex);data.refreshing=false;data.queryError=L"账户刷新异常，请重启配额程序";}});
     if(openConfig)OpenSettings();
+    if(openHistory)OpenHistory();
     MSG message{};
-    while (GetMessageW(&message, nullptr, 0, 0) > 0) { if(settingsWindow&&IsDialogMessageW(settingsWindow,&message))continue;TranslateMessage(&message);DispatchMessageW(&message); }
+    while (GetMessageW(&message, nullptr, 0, 0) > 0) { if(settingsWindow&&IsDialogMessageW(settingsWindow,&message))continue;if(historyWindow&&IsDialogMessageW(historyWindow,&message))continue;TranslateMessage(&message);DispatchMessageW(&message); }
     SetEvent(stopEvent); if (worker.joinable()) worker.join();
     if(cloudWorker.joinable())cloudWorker.join();
     if (font) DeleteObject(font); if (smallFont) DeleteObject(smallFont);

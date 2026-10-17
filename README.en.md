@@ -27,6 +27,7 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 | Native settings window | Set the refresh interval, stale threshold, query conditions and display position through a GUI. Windows uses a native dark style; Linux/macOS use their platform interfaces. |
 | Local account and settings | Queries use the signed-in local Codex and selected data directory. Settings stay on the computer; authentication changes clear the previous account snapshot. |
 | Reuse Codex proxy settings | Queries read Codex proxy environment settings automatically, without configuring a separate endpoint in the companion. |
+| Quota change history | Daily CSV files in a selected directory contain remaining quotas, changes in percentage points, source and timestamps; view them as a native list or chart. |
 | Single instance and cleanup | Repeated launches reuse an instance. Query subprocesses are cleaned up on completion, timeout or app exit. Windows identifies instances by Codex data directory; Linux/macOS use the user configuration directory. |
 
 ### Understanding values and refresh
@@ -36,12 +37,23 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 - Online quotas are queried at the configured interval. Windows also reacts to quota events in local sessions. Displays update when data arrives; freshness depends on the interval and upstream data, without guaranteed second-by-second synchronization.
 - Gray values or `*` in native previews indicate stale snapshots. Failed queries retain the last snapshot and show a failure status so it is not presented as a fresh result.
 
+### Quota history (new on the development branch)
+
+Enable “Record quota changes” in Settings, choose a history directory, then save. The default is `history` under the companion configuration directory. Open history from Settings or the tray/menu bar and switch between List and Chart. Refresh only rereads local logs; it does not query the account.
+
+- The first valid sample establishes a baseline. Subsequent records are appended only when values, windows, sources or reset times change. UTF-8 CSV files are named `quota-history-YYYY-MM-DD.csv` using UTC dates and can be opened in spreadsheet software.
+- Changes represent **remaining percentage points**: 80% → 77.5% is −2.5. Account changes and window resets start a new baseline for differences. Unknown windows remain blank and break the chart line instead of becoming zero.
+- The viewer reads at most the latest 30 UTC days, 2000 rows and 2 MiB. Full files remain on disk without automatic deletion. Changing the directory neither moves nor deletes earlier files; select the old directory to view them again.
+- Logs contain quota values, observation/recording/reset times and source, without credentials or conversations. Disabling recording preserves existing history. Write errors are shown separately and do not replace the displayed quota.
+- This feature is not included in the preview.5 download linked above yet.
+
 ### Low-resource design
 
 - C++17 with Win32/GTK3/AppKit, using native system tray, menu and settings interfaces.
 - Window following primarily responds to system window events, without screen recording, screenshot monitoring or a resident translation service.
 - Windows incrementally reads new session records through file notifications. Account queries run at intervals using short-lived subprocesses.
 - Translations use built-in dictionaries without extra network calls. Closing Settings leaves tray/menu-bar values and the optional strip running.
+- History reuses existing update events without extra queries or background timers. List/chart views perform bounded disk reads only when opened or manually refreshed.
 
 ### Platform differences
 

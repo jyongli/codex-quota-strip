@@ -38,6 +38,16 @@ inline const wchar_t* Translate(const wchar_t* chinese, bool english) {
         {L"无法启动 Codex app-server",L"Cannot start Codex app-server"},{L"无法与 Codex app-server 通信",L"Cannot communicate with Codex"},
         {L"Codex app-server 未返回额度数据",L"Codex returned no quota data"},{L"读取 Codex 额度时发生错误",L"Codex query failed"},
         {L"账户刷新异常，请重启配额程序",L"Account refresh failed; restart the companion"}
+        ,{L"记录额度变化",L"Record quota changes"},{L"额度变化",L"Quota changes"},{L"Codex 配额 — 额度变化",L"Codex Quota — History"}
+        ,{L"日志目录",L"History directory"},{L"浏览…",L"Browse…"},{L"查看额度变化",L"View quota changes"},{L"查看变化…",L"Quota history…"}
+        ,{L"留空使用默认 history 目录",L"Leave empty to use the default history directory"},{L"选择额度日志目录",L"Choose quota history directory"}
+        ,{L"日志目录须为可写的绝对路径。",L"Use a writable absolute history directory."},{L"无法记录额度变化，请检查日志目录和权限。",L"Cannot write quota history; check directory and permissions."}
+        ,{L"无法读取额度变化，请检查日志目录和权限。",L"Cannot read quota history; check directory and permissions."}
+        ,{L"时间",L"Time"},{L"5h 剩余 / 变化",L"5h remaining / change"},{L"周剩余 / 变化",L"Weekly remaining / change"},{L"来源 / 事件",L"Source / event"}
+        ,{L"图表",L"Chart"},{L"列表",L"List"},{L"刷新记录",L"Refresh history"},{L"暂无额度变化记录",L"No quota changes recorded"}
+        ,{L"仅显示最近 30 日，最多 2000 条",L"Last 30 days, up to 2,000 entries"},{L"已截取最近记录",L"Showing recent entries only"}
+        ,{L"条记录",L"entries"},{L"账户",L"Account"},{L"本地事件",L"Local event"},{L"基线",L"Baseline"},{L"变化",L"Change"},{L"重置",L"Reset"}
+        ,{L"百分点",L"pp"},{L"已暂停记录，现有记录仍可查看",L"Recording paused; existing history is available"}
     };
     for (const auto& text : entries) if (std::wcscmp(chinese,text.chinese)==0) return text.english;
     return chinese;

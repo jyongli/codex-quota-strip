@@ -166,6 +166,7 @@ std::filesystem::path ConfigDirectory() {
 }
 Preferences Defaults() {
     Preferences value;
+    value.historyDirectory = (ConfigDirectory() / "history").string();
     value.home = Environment("CODEX_HOME");
     if (value.home.empty()) value.home = (std::filesystem::path(Environment("HOME")) / ".codex").string();
     return value;
@@ -173,7 +174,8 @@ Preferences Defaults() {
 bool Valid(const Preferences& value) {
     return value.seconds >= 30 && value.seconds <= 3600 && value.staleMinutes >= 1 && value.staleMinutes <= 120 &&
         !value.home.empty() && std::filesystem::path(value.home).is_absolute() && SafeValue(value.home) && SafeValue(value.binary) &&
-        !value.host.empty() && value.host.size() <= 128 && SafeValue(value.host);
+        !value.host.empty() && value.host.size() <= 128 && SafeValue(value.host) &&
+        (value.historyDirectory.empty() || (std::filesystem::path(value.historyDirectory).is_absolute() && SafeValue(value.historyDirectory)));
 }
 Preferences Load(const std::filesystem::path& file) {
     Preferences next = Defaults();
@@ -197,6 +199,8 @@ Preferences Load(const std::filesystem::path& file) {
             else if (key == "home") next.home = value;
             else if (key == "binary") next.binary = value;
             else if (key == "host") next.host = value;
+            else if (key == "history_enabled") next.historyEnabled = value == "1";
+            else if (key == "history_directory") next.historyDirectory = value;
         }
     } catch (...) { return Defaults(); }
     return Valid(next) ? next : Defaults();
@@ -211,7 +215,8 @@ bool Save(const std::filesystem::path& file, const Preferences& value) {
         std::ostringstream text;
         text << "seconds=" << value.seconds << "\nstale_minutes=" << value.staleMinutes << "\nonline=" << value.online
              << "\nonly_with_codex=" << value.onlyWithCodex << "\noverlay=" << value.overlay << "\nposition=" << (value.left ? "left" : "top")
-             << "\nhome=" << value.home << "\nbinary=" << value.binary << "\nhost=" << value.host << "\nlanguage=" << (value.chinese ? "zh-CN" : "en") << '\n';
+             << "\nhome=" << value.home << "\nbinary=" << value.binary << "\nhost=" << value.host << "\nlanguage=" << (value.chinese ? "zh-CN" : "en")
+             << "\nhistory_enabled=" << value.historyEnabled << "\nhistory_directory=" << value.historyDirectory << '\n';
         auto bytes = text.str(); size_t offset = 0;
         while (offset < bytes.size()) { auto count = write(out.value, bytes.data() + offset, bytes.size() - offset); if (count < 0 && errno == EINTR) continue; if (count <= 0) { unlink(temporary.c_str()); return false; } offset += static_cast<size_t>(count); }
         if (rename(temporary.c_str(), file.c_str())) { unlink(temporary.c_str()); return false; }
@@ -331,14 +336,19 @@ QueryResult Query(const std::string& binary, const std::string& home, const std:
     } catch (...) { answer.error = "Codex query failed"; return answer; }
 }
 
-Engine::Engine(Preferences settings) : preferences_(std::move(settings)) {}
+Engine::Engine(Preferences settings) : preferences_(std::move(settings)) {
+    history_.configure(preferences_.historyEnabled, preferences_.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(preferences_.historyDirectory));
+}
 Engine::~Engine() { stop(); }
 Preferences Engine::preferences() { std::lock_guard<std::mutex> lock(mutex_); return preferences_; }
 State Engine::state() { std::lock_guard<std::mutex> lock(mutex_); return state_; }
+quota::HistoryReadResult Engine::history(size_t) { return {}; }
 void Engine::configure(Preferences value) {
     if (!Valid(value)) return;
     bool homeChanged; std::string currentHome;
-    { std::lock_guard<std::mutex> lock(mutex_); homeChanged = value.home != preferences_.home; if (homeChanged) { state_.snapshot = {}; authIdentity_ = AuthStamp(value.home); } preferences_ = std::move(value); currentHome = preferences_.home; ++generation_; queryCancelled_ = true; requested_ = true; }
+    { std::lock_guard<std::mutex> lock(mutex_); homeChanged = value.home != preferences_.home; if (homeChanged) { state_.snapshot = {}; authIdentity_ = AuthStamp(value.home); history_.reset(); }
+      history_.configure(value.historyEnabled, value.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(value.historyDirectory));
+      state_.historyError = history_.error(); preferences_ = std::move(value); currentHome = preferences_.home; ++generation_; queryCancelled_ = true; requested_ = true; }
     if (homeChanged && authWatcher_) authWatcher_->home(currentHome);
     wake_.notify_one();
 }
@@ -351,6 +361,7 @@ void Engine::checkAccount() {
         std::lock_guard<std::mutex> lock(mutex_);
         if (home == preferences_.home && identity != authIdentity_) {
             authIdentity_ = identity; state_.snapshot = {}; state_.error = "Account changed; waiting for new quota";
+            history_.reset();
             ++generation_; queryCancelled_ = true; requested_ = true; changed = true;
         }
     }
@@ -383,7 +394,7 @@ void Engine::run() {
             generation = generation_; state_.refreshing = true;
         }
         std::string stamp = AuthStamp(settings.home);
-        if (previousHome != settings.home || (!previousAuth.empty() && previousAuth != stamp)) { std::lock_guard<std::mutex> lock(mutex_); state_.snapshot = {}; }
+        if (previousHome != settings.home || (!previousAuth.empty() && previousAuth != stamp)) { std::lock_guard<std::mutex> lock(mutex_); state_.snapshot = {}; history_.reset(); }
         previousHome = settings.home; previousAuth = stamp;
         if (changed_) changed_();
         lastAttempt = std::chrono::steady_clock::now();
@@ -391,8 +402,12 @@ void Engine::run() {
         {
             std::lock_guard<std::mutex> lock(mutex_); state_.refreshing = false;
             if (generation == generation_) {
-                if (AuthStamp(settings.home) != stamp) { state_.snapshot = {}; state_.error = "Account changed; refresh again"; }
-                else if (answer.ok) { state_.snapshot = answer.snapshot; state_.error.clear(); failures = 0; }
+                if (AuthStamp(settings.home) != stamp) { state_.snapshot = {}; state_.error = "Account changed; refresh again"; history_.reset(); }
+                else if (answer.ok) {
+                    state_.snapshot = answer.snapshot; state_.error.clear(); failures = 0;
+                    // 仅接受当前账号/配置代次的真实成功结果，日志失败不覆盖查询结果。
+                    history_.record(answer.snapshot, "account"); state_.historyError = history_.error();
+                }
                 else { state_.error = answer.error; ++failures; }
             }
             int delay = failures ? std::min(900, preferences_.seconds * (1 << std::min(failures, 3u))) : preferences_.seconds;

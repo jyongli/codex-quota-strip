@@ -7,6 +7,21 @@ inline const char* Translate(const char* english, bool chinese) {
     if (!chinese) return english;
     struct Entry { const char* english; const char* chinese; };
     static const Entry entries[] = {
+        {"Quota history…","额度变化…"},{"Codex Quota — History","Codex 配额 — 变化历史"},
+        {"Record quota changes","记录额度数值变化"},{"History directory","历史日志目录"},{"Browse…","浏览…"},
+        {"Choose history directory","选择历史日志目录"},{"Choose","选择"},{"Cancel","取消"},
+        {"List","列表"},{"Chart","图表"},{"Refresh history","刷新历史"},
+        {"Latest 30 UTC days; at most 2000 records. Refresh manually.","最近 30 个 UTC 日，最多 2000 条；请手动刷新。"},
+        {"Showing newest records; older records were omitted.","正在显示最新记录，较早记录已省略。"},
+        {"No quota changes recorded yet.","尚无额度变化记录。"},{"History recording is disabled.","历史记录已关闭。"},
+        {"Time (local)","时间（本地）"},{"5h remaining","5 小时剩余"},{"Weekly remaining","周剩余"},
+        {"5h change (pp)","5 小时变化（百分点）"},{"Weekly change (pp)","周变化（百分点）"},
+        {"Source / event","来源／事件"},{"Baseline","基线"},{"Change","变化"},{"Reset","重置"},
+        {"Account query","账号查询"},{"Local event","本地事件"},
+        {"5h (blue) / Weekly (green) — remaining %","5 小时（蓝）／周（绿）— 剩余 %"},
+        {"Cannot use history directory; choose an absolute writable path.","无法使用历史目录，请选择可写的绝对路径。"},
+        {"Cannot write quota history; check directory and permissions","无法写入额度历史，请检查目录与权限"},
+        {"Cannot read quota history; check directory and permissions","无法读取额度历史，请检查目录与权限"},
         {"Refresh now","立即刷新"},{"Settings…","设置…"},{"Quit","退出"},{"Save and apply","保存并应用"},{"Codex Quota — Settings","Codex 配额 — 设置"},
         {"Language","界面语言"},{"Query Codex account online","在线查询 Codex 账号额度"},
         {"Query only while the host app is open","仅在宿主应用打开时查询"},{"Query only while the host application is open","仅在宿主应用打开时查询"},

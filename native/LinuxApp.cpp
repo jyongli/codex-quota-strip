@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <iostream>
+#include <ctime>
 
 using namespace nativequota;
 namespace {
@@ -24,6 +25,10 @@ struct App {
     GtkWidget *strip = nullptr, *stripText = nullptr, *config = nullptr, *status = nullptr;
     GtkWidget *seconds = nullptr, *stale = nullptr, *online = nullptr, *only = nullptr, *show = nullptr, *side = nullptr, *home = nullptr, *binary = nullptr, *hostName = nullptr;
     GtkWidget* language = nullptr;
+    GtkWidget *historyEnabled = nullptr, *historyDirectory = nullptr;
+    GtkWidget *historyWindow = nullptr, *historyStack = nullptr, *historyMessage = nullptr, *historyChart = nullptr;
+    GtkListStore* historyModel = nullptr;
+    quota::HistoryReadResult historyRows;
     AppIndicator* indicators[2]{};
     std::filesystem::path configRoot, cache;
     Display* display = nullptr;
@@ -36,6 +41,8 @@ struct App {
     std::string lastSummary;
     explicit App(Options value) : options(std::move(value)), engine(options.preferences) {
         configRoot = options.smoke ? std::filesystem::temp_directory_path() / ("quota-linux-smoke-" + std::to_string(getpid())) : ConfigDirectory();
+        // 测试始终使用隔离目录，构造 Engine 后、启动查询前覆盖默认日志路径。
+        if (options.smoke) { auto prefs = engine.preferences(); prefs.historyDirectory = (configRoot / "history").string(); engine.configure(prefs); }
         cache = std::filesystem::path(g_get_user_cache_dir()) / "codex-quota-strip" / std::to_string(getpid());
         std::filesystem::create_directories(cache); chmod(cache.c_str(), 0700);
     }
@@ -46,17 +53,18 @@ struct App {
         for (auto indicator : indicators) if (indicator) { app_indicator_set_status(indicator, APP_INDICATOR_STATUS_PASSIVE); g_object_unref(indicator); }
         for (int metric = 0; metric < 2; ++metric) for (int generation = 0; generation < 2; ++generation) std::filesystem::remove(cache / (std::to_string(metric) + "-" + std::to_string(generation) + ".png"));
         std::filesystem::remove(cache);
-        if (options.smoke) { std::filesystem::remove(configRoot / "settings.ini"); std::filesystem::remove(configRoot / "instance.lock"); std::filesystem::remove(configRoot); }
+        if (options.smoke) std::filesystem::remove_all(configRoot);
     }
     static void Refresh(GtkMenuItem*, gpointer data) { static_cast<App*>(data)->engine.refresh(); }
     static void Settings(GtkMenuItem*, gpointer data) { static_cast<App*>(data)->openSettings(); }
+    static void History(GtkMenuItem*, gpointer data) { static_cast<App*>(data)->openHistory(); }
     static void Quit(GtkMenuItem*, gpointer data) { static_cast<App*>(data)->closing = true; gtk_main_quit(); }
     static gboolean Update(gpointer data) { auto& app = *static_cast<App*>(data); if (!app.closing) app.paint(); return G_SOURCE_REMOVE; }
     static gboolean StaleTick(gpointer data) { auto& app = *static_cast<App*>(data); if (!app.closing) app.paint(); return !app.closing; }
     const char* ui(const char* english) { return Translate(english, engine.preferences().chinese); }
     GtkWidget* menu() {
         auto menu = gtk_menu_new();
-        for (auto item : {std::pair<const char*, GCallback>{"Refresh now", G_CALLBACK(Refresh)}, {"Settings…", G_CALLBACK(Settings)}, {"Quit", G_CALLBACK(Quit)}}) {
+        for (auto item : {std::pair<const char*, GCallback>{"Refresh now", G_CALLBACK(Refresh)}, {"Quota history…", G_CALLBACK(History)}, {"Settings…", G_CALLBACK(Settings)}, {"Quit", G_CALLBACK(Quit)}}) {
             auto entry = gtk_menu_item_new_with_label(ui(item.first)); g_signal_connect(entry, "activate", item.second, this); gtk_menu_shell_append(GTK_MENU_SHELL(menu), entry);
         }
         gtk_widget_show_all(menu); return menu;
@@ -172,6 +180,7 @@ struct App {
         if (changed) position();
         if (status) {
             std::string message = summary + "\n" + (state.refreshing ? ui("Refreshing…") : !state.error.empty() ? ui(state.error.c_str()) : !prefs.online ? ui("Online queries disabled") : ui("Account quota"));
+            if (!state.historyError.empty()) message += "\n" + std::string(ui(state.historyError.c_str()));
             if (!x11) message += ui("\nWayland: overlay/host detection unavailable. Scheduling uses the interval.");
             gtk_label_set_text(GTK_LABEL(status), message.c_str());
         }
@@ -184,12 +193,20 @@ struct App {
         bool changedLanguage = prefs.chinese != (gtk_combo_box_get_active(GTK_COMBO_BOX(app.language)) == 0);
         prefs.chinese = gtk_combo_box_get_active(GTK_COMBO_BOX(app.language)) == 0;
         prefs.home = gtk_entry_get_text(GTK_ENTRY(app.home)); prefs.binary = gtk_entry_get_text(GTK_ENTRY(app.binary)); prefs.host = gtk_entry_get_text(GTK_ENTRY(app.hostName));
+        prefs.historyEnabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.historyEnabled));
+        prefs.historyDirectory = gtk_entry_get_text(GTK_ENTRY(app.historyDirectory));
+        std::string directoryError;
+        if (!quota::HistoryStore::ValidateDirectory(std::filesystem::path(prefs.historyDirectory), directoryError)) {
+            gtk_label_set_text(GTK_LABEL(app.status), app.ui("Cannot use history directory; choose an absolute writable path.")); return;
+        }
         if (!Save(app.configRoot / "settings.ini", prefs)) { gtk_label_set_text(GTK_LABEL(app.status), app.ui("Cannot save: check absolute home path, values and permissions")); return; }
         app.engine.configure(prefs); app.lastSummary.clear(); app.paint(); app.position();
+        if (app.historyWindow) app.refreshHistory();
         if(changedLanguage){
             // 保存成功后重建固定标签，不丢失当前刷新和显示设置。
             for(auto indicator:app.indicators)app_indicator_set_menu(indicator,GTK_MENU(app.menu()));
             gtk_widget_destroy(app.config);app.openSettings();
+            if (app.historyWindow) { gtk_widget_destroy(app.historyWindow); app.openHistory(); }
         }
     }
     void openSettings() {
@@ -211,10 +228,125 @@ struct App {
         binary = field("Codex executable (blank = auto)", gtk_entry_new()); gtk_entry_set_text(GTK_ENTRY(binary), prefs.binary.c_str());
         hostName = field("Host window class contains", gtk_entry_new()); gtk_entry_set_text(GTK_ENTRY(hostName), prefs.host.c_str());
         language=field("Language",gtk_combo_box_text_new());gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language),"中文");gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language),"English");gtk_combo_box_set_active(GTK_COMBO_BOX(language),prefs.chinese?0:1);
+        historyEnabled = check("Record quota changes", prefs.historyEnabled);
+        auto directoryBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        historyDirectory = gtk_entry_new(); gtk_entry_set_text(GTK_ENTRY(historyDirectory), prefs.historyDirectory.c_str()); gtk_widget_set_hexpand(historyDirectory, TRUE);
+        gtk_box_pack_start(GTK_BOX(directoryBox), historyDirectory, TRUE, TRUE, 0);
+        auto browse = gtk_button_new_with_label(ui("Browse…")); gtk_box_pack_start(GTK_BOX(directoryBox), browse, FALSE, FALSE, 0); field("History directory", directoryBox);
+        g_signal_connect(browse, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
+            auto& app = *static_cast<App*>(data);
+            auto dialog = gtk_file_chooser_dialog_new(app.ui("Choose history directory"), GTK_WINDOW(app.config), GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
+                app.ui("Cancel"), GTK_RESPONSE_CANCEL, app.ui("Choose"), GTK_RESPONSE_ACCEPT, nullptr);
+            gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dialog), gtk_entry_get_text(GTK_ENTRY(app.historyDirectory)));
+            if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+                auto path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog)); if (path) { gtk_entry_set_text(GTK_ENTRY(app.historyDirectory), path); g_free(path); }
+            }
+            gtk_widget_destroy(dialog);
+        }), this);
         auto buttons = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL); gtk_button_box_set_layout(GTK_BUTTON_BOX(buttons), GTK_BUTTONBOX_END); gtk_box_pack_end(GTK_BOX(box), buttons, FALSE, FALSE, 0);
+        auto history = gtk_button_new_with_label(ui("Quota history…")); gtk_container_add(GTK_CONTAINER(buttons), history);
+        g_signal_connect(history, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) { static_cast<App*>(data)->openHistory(); }), this);
         auto refresh = gtk_button_new_with_label(ui("Refresh now")), apply = gtk_button_new_with_label(ui("Save and apply")); gtk_container_add(GTK_CONTAINER(buttons), refresh); gtk_container_add(GTK_CONTAINER(buttons), apply);
         g_signal_connect(refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) { static_cast<App*>(data)->engine.refresh(); }), this); g_signal_connect(apply, "clicked", G_CALLBACK(Apply), this);
         paint(); gtk_widget_show_all(config);
+    }
+    static std::string historyTime(long long ms) {
+        std::time_t seconds = static_cast<std::time_t>(ms / 1000); std::tm local{}; localtime_r(&seconds, &local);
+        char text[40]; std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S", &local); return text;
+    }
+    static std::string historyPercent(const quota::Window& value) {
+        if (!value.present) return "—";
+        char text[32]; std::snprintf(text, sizeof(text), "%.1f%%", std::clamp(100.0 - value.used, 0.0, 100.0)); return text;
+    }
+    static std::string historyDelta(const std::optional<double>& value) {
+        if (!value) return "—";
+        char text[32]; std::snprintf(text, sizeof(text), "%+.1f", *value); return text;
+    }
+    // 只读有界快照；列表与图表共用同一批数据，切换视图不访问磁盘。
+    void renderHistory() {
+        gtk_list_store_clear(historyModel);
+        for (auto it = historyRows.entries.rbegin(); it != historyRows.entries.rend(); ++it) {
+            const auto& row = *it;
+            std::string event = std::string(ui(row.source == "account" ? "Account query" : row.source == "local-event" ? "Local event" : row.source.c_str())) + " / " + ui(row.kind == "baseline" ? "Baseline" : row.kind == "reset" ? "Reset" : "Change");
+            GtkTreeIter iter; gtk_list_store_append(historyModel, &iter);
+            gtk_list_store_set(historyModel, &iter, 0, historyTime(row.recorded).c_str(), 1, historyPercent(row.snapshot.fiveHour).c_str(),
+                2, historyPercent(row.snapshot.weekly).c_str(), 3, historyDelta(row.fiveChange).c_str(), 4, historyDelta(row.weeklyChange).c_str(), 5, event.c_str(), -1);
+        }
+        std::string message = ui("Latest 30 UTC days; at most 2000 records. Refresh manually.");
+        if (!engine.preferences().historyEnabled) message += "\n" + std::string(ui("History recording is disabled."));
+        if (!historyRows.error.empty()) message += "\n" + std::string(ui(historyRows.error.c_str()));
+        auto writeError = engine.state().historyError;
+        if (!writeError.empty()) message += "\n" + std::string(ui(writeError.c_str()));
+        if (historyRows.truncated) message += "\n" + std::string(ui("Showing newest records; older records were omitted."));
+        if (historyRows.entries.empty()) message += "\n" + std::string(ui("No quota changes recorded yet."));
+        gtk_label_set_text(GTK_LABEL(historyMessage), message.c_str()); gtk_widget_queue_draw(historyChart);
+    }
+    void refreshHistory() { historyRows = engine.history(2000); renderHistory(); }
+    void drawHistory(cairo_t* context, double width, double height) {
+        const double left = 55, top = 45, right = std::max(left + 1, width - 28), bottom = std::max(top + 1, height - 50);
+        cairo_set_source_rgb(context, .12, .13, .15); cairo_paint(context);
+        cairo_select_font_face(context, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL); cairo_set_font_size(context, 12);
+        // Cairo 的 toy text API 不负责中文字体回退，图中标签通过 Pango 绘制。
+        auto label = [&](const std::string& text, double x, double y) {
+            auto layout = pango_cairo_create_layout(context); pango_layout_set_text(layout, text.c_str(), -1);
+            cairo_set_source_rgb(context, .86, .88, .92); cairo_move_to(context, x, y); pango_cairo_show_layout(context, layout); g_object_unref(layout);
+        };
+        label(ui("5h (blue) / Weekly (green) — remaining %"), left, 12);
+        for (int percent : {0, 25, 50, 75, 100}) {
+            double y = bottom - (bottom - top) * percent / 100.0;
+            cairo_set_source_rgb(context, .28, .30, .33); cairo_move_to(context, left, y); cairo_line_to(context, right, y); cairo_stroke(context);
+            label(std::to_string(percent), 15, y - 8);
+        }
+        if (historyRows.entries.empty()) { label(ui("No quota changes recorded yet."), left + 12, top + 30); return; }
+        auto start = historyRows.entries.front().recorded, end = historyRows.entries.back().recorded;
+        double span = std::max(1LL, end - start);
+        for (int metric = 0; metric < 2; ++metric) {
+            bool connected = false; long long previousReset = 0;
+            cairo_set_source_rgb(context, metric ? .30 : .35, metric ? .83 : .68, metric ? .57 : .98); cairo_set_line_width(context, 2);
+            for (const auto& row : historyRows.entries) {
+                const auto& value = metric ? row.snapshot.weekly : row.snapshot.fiveHour;
+                if (!value.present) { connected = false; continue; }
+                double x = left + (right - left) * (row.recorded - start) / span;
+                double y = bottom - (bottom - top) * std::clamp(100.0 - value.used, 0.0, 100.0) / 100.0;
+                // 重置或重新建立基线时不跨事件连接；缺失窗口也不当作 0%。
+                if (!connected || row.kind != "change" || value.resets != previousReset) cairo_move_to(context, x, y);
+                else cairo_line_to(context, x, y);
+                cairo_stroke(context); cairo_arc(context, x, y, 2.5, 0, 6.283185307); cairo_fill(context); cairo_move_to(context, x, y);
+                connected = true; previousReset = value.resets;
+            }
+        }
+        label(historyTime(start), left, bottom + 12);
+        if (right - left > 360) label(historyTime(end), right - 160, bottom + 12);
+    }
+    void openHistory() {
+        if (historyWindow) { refreshHistory(); gtk_window_present(GTK_WINDOW(historyWindow)); return; }
+        historyWindow = gtk_window_new(GTK_WINDOW_TOPLEVEL); gtk_window_set_title(GTK_WINDOW(historyWindow), ui("Codex Quota — History"));
+        gtk_window_set_default_size(GTK_WINDOW(historyWindow), 960, 520); gtk_window_set_resizable(GTK_WINDOW(historyWindow), TRUE);
+        g_signal_connect(historyWindow, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer data) {
+            auto& app = *static_cast<App*>(data); app.historyWindow = app.historyStack = app.historyMessage = app.historyChart = nullptr;
+            g_object_unref(app.historyModel); app.historyModel = nullptr; app.historyRows = {};
+        }), this);
+        auto box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10); gtk_container_set_border_width(GTK_CONTAINER(box), 16); gtk_container_add(GTK_CONTAINER(historyWindow), box);
+        auto toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10); gtk_box_pack_start(GTK_BOX(box), toolbar, FALSE, FALSE, 0);
+        historyStack = gtk_stack_new(); auto switcher = gtk_stack_switcher_new(); gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(switcher), GTK_STACK(historyStack));
+        gtk_box_pack_start(GTK_BOX(toolbar), switcher, FALSE, FALSE, 0);
+        auto refresh = gtk_button_new_with_label(ui("Refresh history")); gtk_box_pack_end(GTK_BOX(toolbar), refresh, FALSE, FALSE, 0);
+        g_signal_connect(refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) { static_cast<App*>(data)->refreshHistory(); }), this);
+        historyMessage = gtk_label_new(""); gtk_label_set_xalign(GTK_LABEL(historyMessage), 0); gtk_label_set_line_wrap(GTK_LABEL(historyMessage), TRUE); gtk_box_pack_start(GTK_BOX(box), historyMessage, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(box), historyStack, TRUE, TRUE, 0);
+        historyModel = gtk_list_store_new(6, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+        auto table = gtk_tree_view_new_with_model(GTK_TREE_MODEL(historyModel)); int column = 0;
+        for (const char* title : {"Time (local)", "5h remaining", "Weekly remaining", "5h change (pp)", "Weekly change (pp)", "Source / event"}) {
+            auto cell = gtk_cell_renderer_text_new(); auto heading = gtk_tree_view_column_new_with_attributes(ui(title), cell, "text", column++, nullptr);
+            gtk_tree_view_column_set_resizable(heading, TRUE); gtk_tree_view_append_column(GTK_TREE_VIEW(table), heading);
+        }
+        auto scroll = gtk_scrolled_window_new(nullptr, nullptr); gtk_container_add(GTK_CONTAINER(scroll), table); gtk_stack_add_titled(GTK_STACK(historyStack), scroll, "list", ui("List"));
+        historyChart = gtk_drawing_area_new(); gtk_widget_set_size_request(historyChart, 380, 240);
+        g_signal_connect(historyChart, "draw", G_CALLBACK(+[](GtkWidget* widget, cairo_t* context, gpointer data) -> gboolean {
+            static_cast<App*>(data)->drawHistory(context, gtk_widget_get_allocated_width(widget), gtk_widget_get_allocated_height(widget)); return FALSE;
+        }), this);
+        gtk_stack_add_titled(GTK_STACK(historyStack), historyChart, "chart", ui("Chart"));
+        refreshHistory(); gtk_widget_show_all(historyWindow);
     }
     void activate(::Window window) { unsigned long value = window; XChangeProperty(display, root, activeAtom, XA_WINDOW, 32, PropModeReplace, reinterpret_cast<unsigned char*>(&value), 1); XFlush(display); }
     void startSmoke() {
@@ -229,11 +361,27 @@ struct App {
             case 0: if (!gtk_widget_get_visible(app.strip)) return fail("Foreground host must show overlay"); XMoveWindow(app.display, app.testHost, 200, 120); XFlush(app.display); break;
             case 1: { int x, y; gtk_window_get_position(GTK_WINDOW(app.strip), &x, &y); if (x != 476 || y != 126) return fail("Moving host must reposition overlay"); app.activate(app.testOther); break; }
             case 2: if (gtk_widget_get_visible(app.strip)) return fail("Other foreground application must hide overlay"); app.activate(app.testHost); break;
-            case 3: if (!gtk_widget_get_visible(app.strip)) return fail("Returning to host must restore overlay"); app.openSettings(); gtk_spin_button_set_value(GTK_SPIN_BUTTON(app.seconds), 45); gtk_combo_box_set_active(GTK_COMBO_BOX(app.language),0); Apply(nullptr, &app); break;
+            case 3: if (!gtk_widget_get_visible(app.strip)) return fail("Returning to host must restore overlay"); app.openSettings(); gtk_entry_set_text(GTK_ENTRY(app.historyDirectory), (app.configRoot / "selected-history").c_str()); gtk_spin_button_set_value(GTK_SPIN_BUTTON(app.seconds), 45); gtk_combo_box_set_active(GTK_COMBO_BOX(app.language),0); Apply(nullptr, &app); break;
             case 4: if (app.engine.preferences().seconds != 45 || Load(app.configRoot / "settings.ini").seconds != 45 || !Load(app.configRoot / "settings.ini").chinese || std::string(gtk_window_get_title(GTK_WINDOW(app.config)))!="Codex 配额 — 设置") return fail("Native settings and Chinese UI must apply and persist"); gtk_combo_box_set_active(GTK_COMBO_BOX(app.language),1);Apply(nullptr,&app);if(std::string(gtk_window_get_title(GTK_WINDOW(app.config)))!="Codex Quota — Settings")return fail("English UI must restore live");XDestroyWindow(app.display, app.testHost); app.activate(0); break;
             case 5: {
                 if (gtk_widget_get_visible(app.strip)) return fail("Closed host must hide overlay");
+                if (Load(app.configRoot / "settings.ini").historyDirectory != (app.configRoot / "selected-history").string()) return fail("History directory must persist");
+                app.openHistory();
+                if (!app.historyRows.entries.empty() || gtk_tree_model_iter_n_children(GTK_TREE_MODEL(app.historyModel), nullptr) != 0) return fail("Isolated history must start empty");
+                // 合成缺失／基线／重置行，验证两个视图共用快照且可实际绘制。
+                quota::HistoryEntry first; first.recorded = NowMs() - 1000; first.snapshot.observed = first.recorded; first.snapshot.fiveHour = {true, 20, 0}; first.kind = "baseline"; first.source = "smoke";
+                auto second = first; second.recorded += 500; second.kind = "change"; second.snapshot.fiveHour.used = 30; second.fiveChange = -10;
+                auto third = second; third.recorded += 500; third.kind = "reset"; third.snapshot.fiveHour.present = false; third.snapshot.weekly = {true, 15, 0}; third.fiveChange.reset();
+                app.historyRows.entries = {first, second, third}; app.renderHistory();
+                if (gtk_tree_model_iter_n_children(GTK_TREE_MODEL(app.historyModel), nullptr) != 3) return fail("History list must display synthetic rows");
+                gtk_stack_set_visible_child_name(GTK_STACK(app.historyStack), "chart");
+                if (std::string(gtk_stack_get_visible_child_name(GTK_STACK(app.historyStack))) != "chart") return fail("History chart switch failed");
+                auto surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 800, 400); auto context = cairo_create(surface); app.drawHistory(context, 800, 400); cairo_destroy(context); cairo_surface_destroy(surface);
+                gtk_stack_set_visible_child_name(GTK_STACK(app.historyStack), "list");
+                if (std::string(gtk_stack_get_visible_child_name(GTK_STACK(app.historyStack))) != "list") return fail("History list switch failed");
+                gtk_widget_destroy(app.historyWindow);
                 app.testPassed = true; std::cout << "PASS: Linux tray/settings, X11 focus hiding, move-following, restore and host exit\n";
+                std::cout << "PASS: Linux isolated history directory persistence, empty/list/chart states and synthetic drawing\n";
                 if (app.config) gtk_widget_destroy(app.config);
                 auto usage = std::make_shared<rusage>(); getrusage(RUSAGE_SELF, usage.get());
                 auto measurement = new std::pair<App*, std::shared_ptr<rusage>>(&app, usage);

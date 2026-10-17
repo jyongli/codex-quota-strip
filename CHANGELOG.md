@@ -1,5 +1,11 @@
 # 变更记录 / Changelog
 
+## Unreleased
+
+- 新增自选目录的每日 CSV 额度变化日志及记录开关。 / Record quota changes in daily CSV files in a selected directory, with an enable switch.
+- Windows／Linux／macOS 新增原生中英文列表／图表查看、按需有界读取及独立日志错误。 / Native bilingual list/chart viewers, bounded on-demand reads and separate logging errors.
+- 缺失值、重置周期和账号切换保留基线，数值不变时不写盘。 / Preserve missing values and reset/account baselines; avoid writes for unchanged quotas.
+
 ## v3.0.0-preview.5 — 2026-10-13
 
 - 新增 Windows 当前用户中英安装向导，开始菜单与可选桌面快捷方式；升级／卸载保留设置和自建文件，不改自启钩子。 / Added a per-user Chinese/English Windows setup wizard and shortcuts; updates/removal preserve settings and extra files without changing startup hooks.

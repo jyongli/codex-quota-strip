@@ -7,10 +7,58 @@
 #include <sys/resource.h>
 #include <iostream>
 #include <memory>
+#include <ctime>
 
 using namespace nativequota;
 static Options options;
 static NSString* Text(const std::string& value) { return [[NSString alloc] initWithBytes:value.data() length:value.size() encoding:NSUTF8StringEncoding] ?: @"-"; }
+static NSString* HistoryTime(long long ms) {
+    std::time_t seconds = static_cast<std::time_t>(ms / 1000); std::tm local{}; localtime_r(&seconds, &local);
+    char text[40]; std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S", &local); return Text(text);
+}
+static NSString* HistoryPercent(const quota::Window& value) {
+    if (!value.present) return @"—";
+    return [NSString stringWithFormat:@"%.1f%%", std::clamp(100.0 - value.used, 0.0, 100.0)];
+}
+static NSString* HistoryDelta(const std::optional<double>& value) { return value ? [NSString stringWithFormat:@"%+.1f", *value] : @"—"; }
+// 图表只保留手动读取的有界快照；没有额外定时器或 WebView。
+@interface QuotaHistoryChart : NSView {
+@public
+    std::vector<quota::HistoryEntry> rows;
+    bool chinese;
+}
+@end
+@implementation QuotaHistoryChart
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect; [[NSColor windowBackgroundColor] setFill]; NSRectFill(self.bounds);
+    double left = 55, bottom = 48, right = std::max(left + 1, self.bounds.size.width - 28.0), top = std::max(bottom + 1, self.bounds.size.height - 48.0);
+    NSDictionary* attributes = @{NSFontAttributeName: [NSFont systemFontOfSize:11], NSForegroundColorAttributeName: NSColor.labelColor};
+    auto label = [&](NSString* text, double x, double y) { [text drawAtPoint:NSMakePoint(x, y) withAttributes:attributes]; };
+    label(Text(Translate("5h (blue) / Weekly (green) — remaining %", chinese)), left, top + 18);
+    for (int percent : {0, 25, 50, 75, 100}) {
+        double y = bottom + (top - bottom) * percent / 100.0;
+        [NSColor.separatorColor setStroke]; auto line = [NSBezierPath bezierPath]; [line moveToPoint:NSMakePoint(left, y)]; [line lineToPoint:NSMakePoint(right, y)]; [line stroke];
+        label(Text(std::to_string(percent)), 15, y - 6);
+    }
+    if (rows.empty()) { label(Text(Translate("No quota changes recorded yet.", chinese)), left + 12, top - 35); return; }
+    auto start = rows.front().recorded, end = rows.back().recorded; double span = std::max(1LL, end - start);
+    for (int metric = 0; metric < 2; ++metric) {
+        NSColor* color = metric ? NSColor.systemGreenColor : NSColor.systemBlueColor; bool connected = false; NSPoint previous{}; long long previousReset = 0;
+        for (const auto& row : rows) {
+            const auto& value = metric ? row.snapshot.weekly : row.snapshot.fiveHour;
+            if (!value.present) { connected = false; continue; }
+            auto point = NSMakePoint(left + (right - left) * (row.recorded - start) / span, bottom + (top - bottom) * std::clamp(100.0 - value.used, 0.0, 100.0) / 100.0);
+            // 不跨基线、重置或缺失值连线，窗口未知时不绘为零额度。
+            if (connected && row.kind == "change" && value.resets == previousReset) {
+                auto line = [NSBezierPath bezierPath]; line.lineWidth = 2; [color setStroke]; [line moveToPoint:previous]; [line lineToPoint:point]; [line stroke];
+            }
+            [color setFill]; [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(point.x - 2.5, point.y - 2.5, 5, 5)] fill];
+            previous = point; connected = true; previousReset = value.resets;
+        }
+    }
+    label(HistoryTime(start), left, 20); if (right - left > 360) label(HistoryTime(end), right - 160, 20);
+}
+@end
 @interface QuotaPanel : NSPanel
 @end
 @implementation QuotaPanel
@@ -18,7 +66,7 @@ static NSString* Text(const std::string& value) { return [[NSString alloc] initW
 - (BOOL)canBecomeMainWindow { return NO; }
 @end
 
-@interface QuotaDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate> {
+@interface QuotaDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource> {
     std::unique_ptr<Engine> engine;
     std::unique_ptr<InstanceLock> singleton;
     NSStatusItem* statusItem;
@@ -29,6 +77,15 @@ static NSString* Text(const std::string& value) { return [[NSString alloc] initW
     NSButton *online, *only, *show;
     NSPopUpButton* position;
     NSPopUpButton* language;
+    NSButton* historyEnabled;
+    NSTextField* historyDirectory;
+    NSWindow* historyWindow;
+    NSTextField* historyMessage;
+    NSSegmentedControl* historyMode;
+    NSScrollView* historyScroll;
+    NSTableView* historyTable;
+    QuotaHistoryChart* historyChart;
+    quota::HistoryReadResult historyRows;
     AXObserverRef observer;
     AXUIElementRef application, focused;
     pid_t observedPid;
@@ -47,13 +104,18 @@ static NSString* Text(const std::string& value) { return [[NSString alloc] initW
 - (void)quit:(id)sender;
 - (NSString*)ui:(NSString*)english;
 - (void)translateMenu;
+- (void)openHistory:(id)sender;
+- (void)refreshHistory:(id)sender;
+- (void)renderHistory;
+- (void)switchHistory:(id)sender;
+- (void)browseHistory:(id)sender;
 @end
 static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context) { [(__bridge QuotaDelegate*)context updateHost]; }
 
 @implementation QuotaDelegate
 - (NSString*)ui:(NSString*)english { return Text(Translate(english.UTF8String ?: "",engine && engine->preferences().chinese)); }
 - (void)translateMenu {
-    NSArray* labels=@[@"Refresh now",@"Settings…",@"Allow window following…",@"Quit"];
+    NSArray* labels=@[@"Refresh now",@"Quota history…",@"Settings…",@"Allow window following…",@"Quit"];
     for(NSUInteger i=0;i<labels.count;++i)[statusItem.menu itemAtIndex:i].title=[self ui:labels[i]];
 }
 - (BOOL)matches:(NSRunningApplication*)app {
@@ -64,6 +126,8 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
     (void)notification;
     configRoot = options.smoke ? std::filesystem::temp_directory_path() / ("quota-mac-smoke-" + std::to_string(getpid())) : ConfigDirectory();
+    // 冒烟测试在 Engine 启动前覆盖日志路径，不触碰真实账户的默认目录。
+    if (options.smoke) options.preferences.historyDirectory = (configRoot / "history").string();
     // 用户级实例锁独立于所选账号目录，设置切换后仍阻止重复启动。
     singleton = std::make_unique<InstanceLock>(configRoot / "instance.lock");
     if (!singleton->acquired()) { [NSApp terminate:nil]; return; }
@@ -71,7 +135,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
     statusItem.button.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightMedium];
     NSMenu* menu = [NSMenu new];
-    for (NSArray* spec in @[@[@"Refresh now", NSStringFromSelector(@selector(refresh:))], @[@"Settings…", NSStringFromSelector(@selector(openSettings:))], @[@"Allow window following…", NSStringFromSelector(@selector(permission:))], @[@"Quit", NSStringFromSelector(@selector(quit:))]]) {
+    for (NSArray* spec in @[@[@"Refresh now", NSStringFromSelector(@selector(refresh:))], @[@"Quota history…", NSStringFromSelector(@selector(openHistory:))], @[@"Settings…", NSStringFromSelector(@selector(openSettings:))], @[@"Allow window following…", NSStringFromSelector(@selector(permission:))], @[@"Quit", NSStringFromSelector(@selector(quit:))]]) {
         NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""]; item.target = self; [menu addItem:item];
     }
     statusItem.menu = menu;
@@ -98,14 +162,24 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     [self update]; [self updateHost];
     if (options.settings) [self openSettings:nil];
     if (options.smoke) {
-        [self openSettings:nil]; seconds.stringValue = @"45";[language selectItemAtIndex:0]; [self apply:nil];
+        [self openSettings:nil]; historyDirectory.stringValue = Text((configRoot / "selected-history").string()); seconds.stringValue = @"45";[language selectItemAtIndex:0]; [self apply:nil];
         auto stored = Load(configRoot / "settings.ini");
         auto frame = Placement({100, 50, 900, 600}, false);
         [strip setFrame:NSMakeRect(frame.x, frame.y, frame.width, frame.height) display:YES]; [strip orderFront:nil];
         BOOL passed = statusItem.button != nil && config.isVisible && engine->preferences().seconds == 45 && stored.seconds == 45 && stored.chinese && [config.title isEqualToString:@"Codex 配额 — 设置"] && !strip.canBecomeKeyWindow;
         [language selectItemAtIndex:1];[self apply:nil];passed=passed&&[config.title isEqualToString:@"Codex Quota — Settings"]&&!Load(configRoot/"settings.ini").chinese;
+        passed = passed && stored.historyDirectory == (configRoot / "selected-history").string();
+        [self openHistory:nil]; passed = passed && historyRows.entries.empty() && historyTable.numberOfRows == 0;
+        // 合成记录不写入账户日志；断线边界与空态均由相同的 UI 渲染路径处理。
+        quota::HistoryEntry first; first.recorded = NowMs() - 1000; first.snapshot.observed = first.recorded; first.snapshot.fiveHour = {true, 20, 0}; first.kind = "baseline"; first.source = "smoke";
+        auto second = first; second.recorded += 500; second.kind = "change"; second.snapshot.fiveHour.used = 30; second.fiveChange = -10;
+        auto third = second; third.recorded += 500; third.kind = "reset"; third.snapshot.fiveHour.present = false; third.snapshot.weekly = {true, 15, 0}; third.fiveChange.reset();
+        historyRows.entries = {first, second, third}; [self renderHistory]; passed = passed && historyTable.numberOfRows == 3;
+        historyMode.selectedSegment = 1; [self switchHistory:nil]; [historyChart display]; passed = passed && !historyChart.hidden && historyScroll.hidden;
+        historyMode.selectedSegment = 0; [self switchHistory:nil]; passed = passed && historyChart.hidden && !historyScroll.hidden; [historyWindow close];
         [strip orderOut:nil]; self.smokePassed = passed && !strip.isVisible;
         std::cout << (self.smokePassed ? "PASS: macOS menu bar, native settings persistence, passive overlay and hide lifecycle\n" : "FAIL: macOS native UI smoke test\n");
+        if (self.smokePassed) std::cout << "PASS: macOS isolated history directory persistence, empty/list/chart states and synthetic drawing\n";
         [config close];
         rusage before{}; getrusage(RUSAGE_SELF, &before);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -168,6 +242,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (lastWeeklyOnly != weeklyOnly) { lastWeeklyOnly = weeklyOnly; [self updateHost]; }
     if (status) {
         std::string detail = text + "\n" + Translate(current.refreshing ? "Refreshing…" : !current.error.empty() ? current.error.c_str() : !prefs.online ? "Online queries disabled" : "Account quota",prefs.chinese);
+        if (!current.historyError.empty()) detail += "\n" + std::string(Translate(current.historyError.c_str(), prefs.chinese));
         if (!options.smoke && prefs.overlay && !AXIsProcessTrusted()) detail += Translate("\nAllow Accessibility access to follow Codex windows.",prefs.chinese);
         status.stringValue = Text(detail);
     }
@@ -185,26 +260,31 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     (void)sender;
     if (config) { [NSApp activateIgnoringOtherApps:YES]; [config makeKeyAndOrderFront:nil]; return; }
     auto prefs = engine->preferences();
-    config = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 560, 610) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
+    config = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 560, 760) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
     config.title = [self ui:@"Codex Quota — Settings"]; config.releasedWhenClosed = NO; config.delegate = self;
-    status = [NSTextField wrappingLabelWithString:@""]; status.frame = NSMakeRect(24, 510, 512, 76); status.font = [NSFont systemFontOfSize:14]; [config.contentView addSubview:status];
-    online = [self check:@"Query Codex account online" enabled:prefs.online y:470];
-    only = [self check:@"Query only while the host application is open" enabled:prefs.onlyWithCodex y:436];
-    show = [self check:@"Show window-following overlay" enabled:prefs.overlay y:402];
-    seconds = [self field:@"Refresh interval (30–3600 s)" value:Text(std::to_string(prefs.seconds)) y:360];
-    stale = [self field:@"Stale after (1–120 min)" value:Text(std::to_string(prefs.staleMinutes)) y:322];
-    [self label:@"Overlay position" y:284]; position = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(260, 284, 276, 26) pullsDown:NO]; [position addItemsWithTitles:@[[self ui:@"Top"], [self ui:@"Left"]]]; [position selectItemAtIndex:prefs.left ? 1 : 0]; [config.contentView addSubview:position];
-    home = [self field:@"Codex data directory" value:Text(prefs.home) y:246];
-    binary = [self field:@"Codex executable (blank = auto)" value:Text(prefs.binary) y:208];
-    hostName = [self field:@"Host application contains" value:Text(prefs.host) y:170];
-    [self label:@"Language" y:132];language=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(260,132,276,26)pullsDown:NO];[language addItemsWithTitles:@[@"中文",@"English"]];[language selectItemAtIndex:prefs.chinese?0:1];[config.contentView addSubview:language];
+    status = [NSTextField wrappingLabelWithString:@""]; status.frame = NSMakeRect(24, 660, 512, 76); status.font = [NSFont systemFontOfSize:14]; [config.contentView addSubview:status];
+    online = [self check:@"Query Codex account online" enabled:prefs.online y:620];
+    only = [self check:@"Query only while the host application is open" enabled:prefs.onlyWithCodex y:586];
+    show = [self check:@"Show window-following overlay" enabled:prefs.overlay y:552];
+    seconds = [self field:@"Refresh interval (30–3600 s)" value:Text(std::to_string(prefs.seconds)) y:510];
+    stale = [self field:@"Stale after (1–120 min)" value:Text(std::to_string(prefs.staleMinutes)) y:472];
+    [self label:@"Overlay position" y:434]; position = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(260, 434, 276, 26) pullsDown:NO]; [position addItemsWithTitles:@[[self ui:@"Top"], [self ui:@"Left"]]]; [position selectItemAtIndex:prefs.left ? 1 : 0]; [config.contentView addSubview:position];
+    home = [self field:@"Codex data directory" value:Text(prefs.home) y:396];
+    binary = [self field:@"Codex executable (blank = auto)" value:Text(prefs.binary) y:358];
+    hostName = [self field:@"Host application contains" value:Text(prefs.host) y:320];
+    [self label:@"Language" y:282];language=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(260,282,276,26)pullsDown:NO];[language addItemsWithTitles:@[@"中文",@"English"]];[language selectItemAtIndex:prefs.chinese?0:1];[config.contentView addSubview:language];
+    historyEnabled = [self check:@"Record quota changes" enabled:prefs.historyEnabled y:240];
+    historyDirectory = [self field:@"History directory" value:Text(prefs.historyDirectory) y:202]; historyDirectory.frame = NSMakeRect(260, 202, 190, 24);
+    auto browse = [NSButton buttonWithTitle:[self ui:@"Browse…"] target:self action:@selector(browseHistory:)]; browse.frame = NSMakeRect(454, 199, 82, 30); [config.contentView addSubview:browse];
+    auto history = [NSButton buttonWithTitle:[self ui:@"Quota history…"] target:self action:@selector(openHistory:)]; history.frame = NSMakeRect(24, 156, 230, 32); [config.contentView addSubview:history];
     auto permission = [NSButton buttonWithTitle:[self ui:@"Allow Accessibility…"] target:self action:@selector(permission:)]; permission.frame = NSMakeRect(24, 85, 230, 32); [config.contentView addSubview:permission];
     auto refresh = [NSButton buttonWithTitle:[self ui:@"Refresh now"] target:self action:@selector(refresh:)]; refresh.frame = NSMakeRect(24, 30, 130, 34); [config.contentView addSubview:refresh];
     auto apply = [NSButton buttonWithTitle:[self ui:@"Save and apply"] target:self action:@selector(apply:)]; apply.frame = NSMakeRect(380, 30, 156, 34); apply.keyEquivalent = @"\r"; [config.contentView addSubview:apply];
     [config center]; [self update]; [NSApp activateIgnoringOtherApps:YES]; [config makeKeyAndOrderFront:nil];
 }
 - (void)windowWillClose:(NSNotification*)notification {
-    if (notification.object == config) { config = nil; status = nil; seconds = nil; stale = nil; home = nil; binary = nil; hostName = nil; online = nil; only = nil; show = nil; position = nil; language=nil; }
+    if (notification.object == config) { config = nil; status = nil; seconds = nil; stale = nil; home = nil; binary = nil; hostName = nil; online = nil; only = nil; show = nil; position = nil; language=nil; historyDirectory=nil; historyEnabled=nil; }
+    if (notification.object == historyWindow) { historyWindow=nil; historyMessage=nil; historyMode=nil; historyScroll=nil; historyTable=nil; historyChart=nil; historyRows={}; }
 }
 - (void)apply:(id)sender {
     (void)sender; auto prefs = engine->preferences();
@@ -213,9 +293,73 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     prefs.online = online.state == NSControlStateValueOn; prefs.onlyWithCodex = only.state == NSControlStateValueOn; prefs.overlay = show.state == NSControlStateValueOn; prefs.left = position.indexOfSelectedItem == 1;
     bool changedLanguage=prefs.chinese!=(language.indexOfSelectedItem==0);prefs.chinese=language.indexOfSelectedItem==0;
     prefs.home = home.stringValue.UTF8String ?: ""; prefs.binary = binary.stringValue.UTF8String ?: ""; prefs.host = hostName.stringValue.UTF8String ?: "";
+    prefs.historyEnabled = historyEnabled.state == NSControlStateValueOn; prefs.historyDirectory = historyDirectory.stringValue.UTF8String ?: "";
+    std::string directoryError;
+    if (!quota::HistoryStore::ValidateDirectory(std::filesystem::path(prefs.historyDirectory), directoryError)) { status.stringValue = [self ui:@"Cannot use history directory; choose an absolute writable path."]; return; }
     if (!Save(configRoot / "settings.ini", prefs)) { status.stringValue = [self ui:@"Cannot save: check absolute home path, values and permissions."]; return; }
     engine->configure(prefs); [self updateHost]; [self update];
-    if(changedLanguage){[self translateMenu];[config close];[self openSettings:nil];}
+    if (historyWindow) [self refreshHistory:nil];
+    if(changedLanguage){[self translateMenu];[config close];[self openSettings:nil];if(historyWindow){[historyWindow close];[self openHistory:nil];}}
+}
+- (void)browseHistory:(id)sender {
+    (void)sender; auto panel = [NSOpenPanel openPanel]; panel.canChooseDirectories = YES; panel.canChooseFiles = NO; panel.allowsMultipleSelection = NO; panel.canCreateDirectories = YES;
+    panel.title = [self ui:@"Choose history directory"]; panel.prompt = [self ui:@"Choose"];
+    panel.directoryURL = [NSURL fileURLWithPath:historyDirectory.stringValue isDirectory:YES];
+    [panel beginSheetModalForWindow:config completionHandler:^(NSModalResponse response) {
+        if (response == NSModalResponseOK && panel.URL.isFileURL && historyDirectory) historyDirectory.stringValue = panel.URL.path;
+    }];
+}
+- (NSInteger)numberOfRowsInTableView:(NSTableView*)tableView { (void)tableView; return static_cast<NSInteger>(historyRows.entries.size()); }
+- (id)tableView:(NSTableView*)tableView objectValueForTableColumn:(NSTableColumn*)column row:(NSInteger)index {
+    (void)tableView;
+    if (index < 0 || static_cast<size_t>(index) >= historyRows.entries.size()) return @"";
+    const auto& row = historyRows.entries[historyRows.entries.size() - 1 - static_cast<size_t>(index)];
+    switch (column.identifier.integerValue) {
+        case 0: return HistoryTime(row.recorded);
+        case 1: return HistoryPercent(row.snapshot.fiveHour);
+        case 2: return HistoryPercent(row.snapshot.weekly);
+        case 3: return HistoryDelta(row.fiveChange);
+        case 4: return HistoryDelta(row.weeklyChange);
+        default: return [NSString stringWithFormat:@"%@ / %@", [self ui:row.source == "account" ? @"Account query" : row.source == "local-event" ? @"Local event" : Text(row.source)], [self ui:row.kind == "baseline" ? @"Baseline" : row.kind == "reset" ? @"Reset" : @"Change"]];
+    }
+}
+- (void)renderHistory {
+    if (!historyWindow) return;
+    auto prefs = engine->preferences(); historyChart->rows = historyRows.entries; historyChart->chinese = prefs.chinese;
+    [historyTable reloadData]; historyChart.needsDisplay = YES;
+    NSMutableString* message = [[self ui:@"Latest 30 UTC days; at most 2000 records. Refresh manually."] mutableCopy];
+    if (!prefs.historyEnabled) [message appendFormat:@"\n%@", [self ui:@"History recording is disabled."]];
+    if (!historyRows.error.empty()) [message appendFormat:@"\n%@", [self ui:Text(historyRows.error)]];
+    auto writeError = engine->state().historyError;
+    if (!writeError.empty()) [message appendFormat:@"\n%@", [self ui:Text(writeError)]];
+    if (historyRows.truncated) [message appendFormat:@"\n%@", [self ui:@"Showing newest records; older records were omitted."]];
+    if (historyRows.entries.empty()) [message appendFormat:@"\n%@", [self ui:@"No quota changes recorded yet."]];
+    historyMessage.stringValue = message;
+}
+- (void)refreshHistory:(id)sender { (void)sender; if (historyWindow) { historyRows = engine->history(2000); [self renderHistory]; } }
+- (void)switchHistory:(id)sender {
+    (void)sender; BOOL chart = historyMode.selectedSegment == 1; historyScroll.hidden = chart; historyChart.hidden = !chart;
+    if (chart) historyChart.needsDisplay = YES;
+}
+- (void)openHistory:(id)sender {
+    (void)sender;
+    if (historyWindow) { [self refreshHistory:nil]; [NSApp activateIgnoringOtherApps:YES]; [historyWindow makeKeyAndOrderFront:nil]; return; }
+    historyWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 960, 540) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
+    historyWindow.title = [self ui:@"Codex Quota — History"]; historyWindow.minSize = NSMakeSize(640, 400); historyWindow.releasedWhenClosed = NO; historyWindow.delegate = self;
+    historyMode = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(16, 496, 190, 28)]; historyMode.segmentCount = 2;
+    [historyMode setLabel:[self ui:@"List"] forSegment:0]; [historyMode setLabel:[self ui:@"Chart"] forSegment:1]; historyMode.selectedSegment = 0; historyMode.target = self; historyMode.action = @selector(switchHistory:); historyMode.autoresizingMask = NSViewMaxXMargin | NSViewMinYMargin; [historyWindow.contentView addSubview:historyMode];
+    auto refresh = [NSButton buttonWithTitle:[self ui:@"Refresh history"] target:self action:@selector(refreshHistory:)]; refresh.frame = NSMakeRect(764, 496, 180, 28); refresh.autoresizingMask = NSViewMinXMargin | NSViewMinYMargin; [historyWindow.contentView addSubview:refresh];
+    historyMessage = [NSTextField wrappingLabelWithString:@""]; historyMessage.frame = NSMakeRect(16, 392, 928, 94); historyMessage.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin; [historyWindow.contentView addSubview:historyMessage];
+    historyScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 16, 928, 366)]; historyScroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; historyScroll.hasVerticalScroller = YES; historyScroll.hasHorizontalScroller = YES;
+    historyTable = [[NSTableView alloc] initWithFrame:historyScroll.bounds]; historyTable.dataSource = self;
+    NSArray* headings = @[@"Time (local)", @"5h remaining", @"Weekly remaining", @"5h change (pp)", @"Weekly change (pp)", @"Source / event"];
+    for (NSUInteger index = 0; index < headings.count; ++index) {
+        auto column = [[NSTableColumn alloc] initWithIdentifier:[NSString stringWithFormat:@"%lu", static_cast<unsigned long>(index)]];
+        column.title = [self ui:headings[index]]; column.width = index == 0 ? 175 : index == 5 ? 205 : 130; column.minWidth = 90; column.editable = NO; [historyTable addTableColumn:column];
+    }
+    historyScroll.documentView = historyTable; [historyWindow.contentView addSubview:historyScroll];
+    historyChart = [[QuotaHistoryChart alloc] initWithFrame:historyScroll.frame]; historyChart.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; historyChart.hidden = YES; [historyWindow.contentView addSubview:historyChart];
+    [self refreshHistory:nil]; [historyWindow center]; [NSApp activateIgnoringOtherApps:YES]; [historyWindow makeKeyAndOrderFront:nil];
 }
 - (void)refresh:(id)sender { (void)sender; if (engine) engine->refresh(); }
 - (void)permission:(id)sender {
@@ -229,7 +373,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (statusItem) [[NSStatusBar systemStatusBar] removeStatusItem:statusItem];
     if (options.smoke) { std::filesystem::remove(configRoot / "settings.ini"); }
     singleton.reset();
-    if (options.smoke) { std::filesystem::remove(configRoot / "instance.lock"); std::filesystem::remove(configRoot); }
+    if (options.smoke) std::filesystem::remove_all(configRoot);
     // NSApplication 正常终止默认使用状态 0；测试失败必须显式传回非零状态。
     if (options.smoke && !self.smokePassed) std::exit(1);
     return NSTerminateNow;

@@ -10,6 +10,7 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(root);
     try {
         auto settings = nativequota::Defaults(); settings.home = (root / "home with spaces").string();
+        settings.historyDirectory = (root / "history with spaces").string();
         std::filesystem::create_directories(settings.home);
         { std::ofstream auth(std::filesystem::path(settings.home) / "auth.json"); auth << "synthetic-account-a"; }
         settings.seconds = 45; settings.staleMinutes = 2; settings.left = true; settings.onlyWithCodex = false; settings.chinese = true;
@@ -18,6 +19,7 @@ int main(int argc, char** argv) {
         auto restored = nativequota::Load(file);
         require(restored.seconds == 45 && restored.staleMinutes == 2 && restored.left && restored.home == settings.home, "Settings must persist across restart");
         require(restored.chinese, "Native UI language must persist across restart");
+        require(restored.historyEnabled && restored.historyDirectory == settings.historyDirectory, "History enable/path settings must persist across restart");
         struct stat attributes{}; stat(file.c_str(), &attributes);
         require((attributes.st_mode & 0777) == 0600, "Settings must be private to the current user");
         settings.seconds = 0; require(!nativequota::Save(file, settings) && nativequota::Load(file).seconds == 45, "Invalid settings must not overwrite valid file"); settings.seconds = 45;
@@ -40,6 +42,8 @@ int main(int argc, char** argv) {
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         while ((!engine.state().snapshot.observed || notifications.load() < 2) && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         require(engine.state().snapshot.fiveHour.used == 20, "Refresh engine must query real fake-server process");
+        auto history = engine.history();
+        require(history.entries.size() == 1 && history.entries[0].snapshot.fiveHour.used == 20 && history.entries[0].source == "account", "Successful engine query must be readable from the selected quota history directory");
         int before = notifications.load(); std::this_thread::sleep_for(std::chrono::milliseconds(200));
         require(notifications.load() == before, "Idle engine must block rather than poll its UI");
         settings.online = false; engine.configure(settings);
@@ -51,6 +55,8 @@ int main(int argc, char** argv) {
         deadline = std::chrono::steady_clock::now() + std::chrono::seconds(7);
         while (!engine.state().snapshot.observed && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         require(engine.state().snapshot.observed > 0, "Online refresh must resume after account change");
+        history = engine.history();
+        require(history.entries.size() == 2 && history.entries.back().kind == "baseline" && !history.entries.back().fiveChange, "Account changes must begin another independent history baseline");
         settings.online = false; engine.configure(settings);
         require(engine.state().snapshot.observed > 0, "Rename regression must begin with a real snapshot");
         std::filesystem::rename(std::filesystem::path(settings.home) / "auth.json", std::filesystem::path(settings.home) / "auth.saved");
@@ -59,6 +65,8 @@ int main(int argc, char** argv) {
         require(engine.state().snapshot.observed == 0, "Moving auth.json away must clear cached quota even with online queries off");
         settings.home = (root / "second account").string(); settings.online = false; engine.configure(settings);
         require(engine.state().snapshot.observed == 0, "Changing account home must clear previous snapshot"); engine.stop();
+        for (const auto& entry : std::filesystem::directory_iterator(settings.historyDirectory)) std::filesystem::remove(entry.path());
+        std::filesystem::remove(settings.historyDirectory);
         std::filesystem::remove(root / "home with spaces/auth.saved"); std::filesystem::remove(root / "home with spaces");
         std::filesystem::remove(file); std::filesystem::remove(root / "instance.lock"); std::filesystem::remove(root);
         std::cout << "PASS: preferences, input bounds, overlay geometry, expiry, single instance and blocking refresh lifecycle\n";

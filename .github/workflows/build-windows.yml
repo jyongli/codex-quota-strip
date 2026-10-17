@@ -108,8 +108,8 @@ jobs:
           persist-credentials: false
       - name: Build Windows x64
         run: ./Build.ps1
-      - name: Run default tests
-        run: ./Test.ps1
+      - name: Run core and isolated UI tests
+        run: ./Test.ps1 -Integration
       - name: Build Windows installation wizard
         run: ./scripts/Build-WindowsInstaller.ps1 -Version v3.0.0-preview.5 -OutputDirectory build/installers
       - name: Verify isolated install, upgrade and uninstall

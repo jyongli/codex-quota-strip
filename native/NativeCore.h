@@ -1,5 +1,6 @@
 #pragma once
 #include "../source/QuotaCore.h"
+#include "../source/QuotaHistory.h"
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
@@ -14,11 +15,14 @@ struct Preferences {
     int seconds = 120, staleMinutes = 5;
     bool online = true, onlyWithCodex = true, overlay = true, left = false, chinese = false;
     std::string home, binary, host = "Codex";
+    bool historyEnabled = true;
+    std::string historyDirectory;
 };
 struct State {
     quota::Snapshot snapshot;
     bool refreshing = false;
     std::string error;
+    std::string historyError;
 };
 struct Rect { double x = 0, y = 0, width = 0, height = 0; };
 struct QueryResult {
@@ -57,6 +61,7 @@ class Engine {
     std::condition_variable wake_;
     Preferences preferences_;
     State state_;
+    quota::HistoryStore history_;
     std::function<void()> changed_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
@@ -72,6 +77,7 @@ public:
     ~Engine();
     Preferences preferences();
     State state();
+    quota::HistoryReadResult history(size_t maxRows = 2000);
     void configure(Preferences settings);
     void hostAvailable(bool value);
     void start(std::function<void()> changed);
