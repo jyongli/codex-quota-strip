@@ -7,7 +7,14 @@ $status = Join-Path $fixture 'status.json'
 $log = Join-Path $sessions 'rollout-test.jsonl'
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 [System.IO.File]::WriteAllText($log, '', $utf8)
-$runner = Start-Process -FilePath $Executable -ArgumentList @('--headless','--home',('"' + $fixture + '"'),'--status',('"' + $status + '"')) -WindowStyle Hidden -PassThru
+# 仅覆盖这个子进程的配置目录，合成额度日志不得写入用户的真实 history。
+$startInfo = [Diagnostics.ProcessStartInfo]::new()
+$startInfo.FileName = [IO.Path]::GetFullPath($Executable)
+$startInfo.UseShellExecute = $false
+$startInfo.CreateNoWindow = $true
+$startInfo.Arguments = '--headless --home "' + $fixture + '" --status "' + $status + '"'
+$startInfo.EnvironmentVariables['LOCALAPPDATA'] = $fixture
+$runner = [Diagnostics.Process]::Start($startInfo)
 function Read-State { Get-Content -LiteralPath $status -Raw | ConvertFrom-Json }
 function Wait-State([scriptblock]$condition, [string]$message) {
     $deadline = [Diagnostics.Stopwatch]::StartNew()

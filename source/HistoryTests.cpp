@@ -43,6 +43,19 @@ int main() {
     for (int i = 0; i < 2050; ++i) { snapshot.observed += 1; snapshot.weekly.used = i % 100; require(history.record(snapshot, "account"), "changed quota must append reliably"); }
     rows = history.read(); require(rows.entries.size() == 2000 && rows.truncated && rows.entries.back().snapshot.weekly.used == 49, "viewer must return only the latest bounded rows");
     require(history.read(3).entries.size() == 3 && history.read(0).entries.empty(), "caller row limits must be honored");
+    auto mixed = root / "mixed-archive"; history.configure(true, mixed);
+    snapshot.observed += 1; history.record(snapshot, "account"); snapshot.weekly.used = 50; snapshot.observed += 1; history.record(snapshot, "account");
+    std::time_t yesterday = static_cast<std::time_t>(now / 1000 - 86400); std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &yesterday);
+#else
+    gmtime_r(&yesterday, &utc);
+#endif
+    char brokenName[64]{}; std::strftime(brokenName, sizeof(brokenName), "quota-history-%Y-%m-%d.csv", &utc);
+    std::filesystem::create_directory(mixed / brokenName);
+    rows = history.read();
+    require(!rows.error.empty() && rows.entries.size() == 2 && rows.entries[0].snapshot.observed < rows.entries[1].snapshot.observed,
+        "partial history read failure must still return rows in chronological order for charts");
     auto bad = root / "not-a-directory"; { std::ofstream out(bad); out << "preserve"; }
     require(!quota::HistoryStore::ValidateDirectory(bad, error), "a file must not be accepted as a directory");
     history.configure(true, bad); snapshot.observed += 1; snapshot.weekly.used = 25;

@@ -8,6 +8,7 @@
 #include <iostream>
 #include <memory>
 #include <ctime>
+#include <fstream>
 
 using namespace nativequota;
 static Options options;
@@ -73,6 +74,9 @@ static NSString* HistoryDelta(const std::optional<double>& value) { return value
     QuotaPanel* strip;
     NSTextField* stripText;
     NSWindow* config;
+    NSView *configForm, *configActions;
+    NSScrollView* configScroll;
+    NSButton* configApply;
     NSTextField *status, *seconds, *stale, *home, *binary, *hostName;
     NSButton *online, *only, *show;
     NSPopUpButton* position;
@@ -105,6 +109,7 @@ static NSString* HistoryDelta(const std::optional<double>& value) { return value
 - (NSString*)ui:(NSString*)english;
 - (void)translateMenu;
 - (void)openHistory:(id)sender;
+- (void)showHistory:(BOOL)readHistory;
 - (void)refreshHistory:(id)sender;
 - (void)renderHistory;
 - (void)switchHistory:(id)sender;
@@ -169,6 +174,16 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
         BOOL passed = statusItem.button != nil && config.isVisible && engine->preferences().seconds == 45 && stored.seconds == 45 && stored.chinese && [config.title isEqualToString:@"Codex 配额 — 设置"] && !strip.canBecomeKeyWindow;
         [language selectItemAtIndex:1];[self apply:nil];passed=passed&&[config.title isEqualToString:@"Codex Quota — Settings"]&&!Load(configRoot/"settings.ini").chinese;
         passed = passed && stored.historyDirectory == (configRoot / "selected-history").string();
+        passed = passed && configScroll.documentView == configForm && configScroll.hasVerticalScroller && configApply.superview == configActions &&
+            NSContainsRect(config.contentView.bounds, configActions.frame) && NSContainsRect(configActions.bounds, configApply.frame) && config.frame.size.height <= NSScreen.mainScreen.visibleFrame.size.height;
+        [configForm scrollRectToVisible:historyDirectory.frame]; passed = passed && NSIntersectsRect(configForm.visibleRect, historyDirectory.frame);
+        // 禁用时不创建目录；普通文件的子路径也应能够作为已禁用配置保存。
+        auto uncreated = configRoot / "disabled-uncreated"; historyEnabled.state = NSControlStateValueOff; historyDirectory.stringValue = Text(uncreated.string()); [self apply:nil];
+        passed = passed && !engine->preferences().historyEnabled && !Load(configRoot / "settings.ini").historyEnabled && !std::filesystem::exists(uncreated);
+        auto blocker = configRoot / "history-blocker"; { std::ofstream file(blocker); file << "fixture"; }
+        auto invalidDirectory = blocker / "child"; historyDirectory.stringValue = Text(invalidDirectory.string()); [self apply:nil];
+        passed = passed && engine->preferences().historyDirectory == invalidDirectory.string() && Load(configRoot / "settings.ini").historyDirectory == invalidDirectory.string();
+        historyEnabled.state = NSControlStateValueOn; historyDirectory.stringValue = Text((configRoot / "selected-history").string()); [self apply:nil];
         [self openHistory:nil]; passed = passed && historyRows.entries.empty() && historyTable.numberOfRows == 0;
         // 合成记录不写入账户日志；断线边界与空态均由相同的 UI 渲染路径处理。
         quota::HistoryEntry first; first.recorded = NowMs() - 1000; first.snapshot.observed = first.recorded; first.snapshot.fiveHour = {true, 20, 0}; first.kind = "baseline"; first.source = "smoke";
@@ -180,6 +195,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
         [strip orderOut:nil]; self.smokePassed = passed && !strip.isVisible;
         std::cout << (self.smokePassed ? "PASS: macOS menu bar, native settings persistence, passive overlay and hide lifecycle\n" : "FAIL: macOS native UI smoke test\n");
         if (self.smokePassed) std::cout << "PASS: macOS isolated history directory persistence, empty/list/chart states and synthetic drawing\n";
+        if (self.smokePassed) std::cout << "PASS: macOS disabled history avoids directory probes; scrollable settings keep Save reachable\n";
         [config close];
         rusage before{}; getrusage(RUSAGE_SELF, &before);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -248,42 +264,50 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     }
 }
 - (NSTextField*)label:(NSString*)title y:(CGFloat)y {
-    auto label = [NSTextField labelWithString:[self ui:title]]; label.frame = NSMakeRect(24, y, 235, 24); [config.contentView addSubview:label]; return label;
+    auto label = [NSTextField labelWithString:[self ui:title]]; label.frame = NSMakeRect(24, y, 235, 24); [configForm addSubview:label]; return label;
 }
 - (NSTextField*)field:(NSString*)title value:(NSString*)value y:(CGFloat)y {
-    [self label:title y:y]; auto input = [[NSTextField alloc] initWithFrame:NSMakeRect(260, y, 276, 24)]; input.stringValue = value; [config.contentView addSubview:input]; return input;
+    [self label:title y:y]; auto input = [[NSTextField alloc] initWithFrame:NSMakeRect(260, y, 276, 24)]; input.stringValue = value; [configForm addSubview:input]; return input;
 }
 - (NSButton*)check:(NSString*)title enabled:(BOOL)enabled y:(CGFloat)y {
-    auto button = [NSButton checkboxWithTitle:[self ui:title] target:nil action:nil]; button.frame = NSMakeRect(24, y, 500, 25); button.state = enabled ? NSControlStateValueOn : NSControlStateValueOff; [config.contentView addSubview:button]; return button;
+    auto button = [NSButton checkboxWithTitle:[self ui:title] target:nil action:nil]; button.frame = NSMakeRect(24, y, 500, 25); button.state = enabled ? NSControlStateValueOn : NSControlStateValueOff; [configForm addSubview:button]; return button;
 }
 - (void)openSettings:(id)sender {
     (void)sender;
     if (config) { [NSApp activateIgnoringOtherApps:YES]; [config makeKeyAndOrderFront:nil]; return; }
     auto prefs = engine->preferences();
-    config = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 560, 760) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
+    NSRect workarea = NSScreen.mainScreen ? NSScreen.mainScreen.visibleFrame : NSMakeRect(0, 0, 1024, 768);
+    CGFloat height = std::min(640.0, std::max(260.0, workarea.size.height - 80.0));
+    config = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 560, height) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
     config.title = [self ui:@"Codex Quota — Settings"]; config.releasedWhenClosed = NO; config.delegate = self;
-    status = [NSTextField wrappingLabelWithString:@""]; status.frame = NSMakeRect(24, 660, 512, 76); status.font = [NSFont systemFontOfSize:14]; [config.contentView addSubview:status];
+    // 表单保留原坐标，放入滚动视口；底部操作区不滚动，保存键始终可达。
+    configScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 80, 560, height - 80)]; configScroll.hasVerticalScroller = YES;
+    configScroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    configForm = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 560, 760)]; configScroll.documentView = configForm; [config.contentView addSubview:configScroll];
+    configActions = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 560, 80)]; configActions.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin; [config.contentView addSubview:configActions];
+    status = [NSTextField wrappingLabelWithString:@""]; status.frame = NSMakeRect(24, 660, 512, 76); status.font = [NSFont systemFontOfSize:14]; [configForm addSubview:status];
     online = [self check:@"Query Codex account online" enabled:prefs.online y:620];
     only = [self check:@"Query only while the host application is open" enabled:prefs.onlyWithCodex y:586];
     show = [self check:@"Show window-following overlay" enabled:prefs.overlay y:552];
     seconds = [self field:@"Refresh interval (30–3600 s)" value:Text(std::to_string(prefs.seconds)) y:510];
     stale = [self field:@"Stale after (1–120 min)" value:Text(std::to_string(prefs.staleMinutes)) y:472];
-    [self label:@"Overlay position" y:434]; position = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(260, 434, 276, 26) pullsDown:NO]; [position addItemsWithTitles:@[[self ui:@"Top"], [self ui:@"Left"]]]; [position selectItemAtIndex:prefs.left ? 1 : 0]; [config.contentView addSubview:position];
+    [self label:@"Overlay position" y:434]; position = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(260, 434, 276, 26) pullsDown:NO]; [position addItemsWithTitles:@[[self ui:@"Top"], [self ui:@"Left"]]]; [position selectItemAtIndex:prefs.left ? 1 : 0]; [configForm addSubview:position];
     home = [self field:@"Codex data directory" value:Text(prefs.home) y:396];
     binary = [self field:@"Codex executable (blank = auto)" value:Text(prefs.binary) y:358];
     hostName = [self field:@"Host application contains" value:Text(prefs.host) y:320];
-    [self label:@"Language" y:282];language=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(260,282,276,26)pullsDown:NO];[language addItemsWithTitles:@[@"中文",@"English"]];[language selectItemAtIndex:prefs.chinese?0:1];[config.contentView addSubview:language];
+    [self label:@"Language" y:282];language=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(260,282,276,26)pullsDown:NO];[language addItemsWithTitles:@[@"中文",@"English"]];[language selectItemAtIndex:prefs.chinese?0:1];[configForm addSubview:language];
     historyEnabled = [self check:@"Record quota changes" enabled:prefs.historyEnabled y:240];
     historyDirectory = [self field:@"History directory" value:Text(prefs.historyDirectory) y:202]; historyDirectory.frame = NSMakeRect(260, 202, 190, 24);
-    auto browse = [NSButton buttonWithTitle:[self ui:@"Browse…"] target:self action:@selector(browseHistory:)]; browse.frame = NSMakeRect(454, 199, 82, 30); [config.contentView addSubview:browse];
-    auto history = [NSButton buttonWithTitle:[self ui:@"Quota history…"] target:self action:@selector(openHistory:)]; history.frame = NSMakeRect(24, 156, 230, 32); [config.contentView addSubview:history];
-    auto permission = [NSButton buttonWithTitle:[self ui:@"Allow Accessibility…"] target:self action:@selector(permission:)]; permission.frame = NSMakeRect(24, 85, 230, 32); [config.contentView addSubview:permission];
-    auto refresh = [NSButton buttonWithTitle:[self ui:@"Refresh now"] target:self action:@selector(refresh:)]; refresh.frame = NSMakeRect(24, 30, 130, 34); [config.contentView addSubview:refresh];
-    auto apply = [NSButton buttonWithTitle:[self ui:@"Save and apply"] target:self action:@selector(apply:)]; apply.frame = NSMakeRect(380, 30, 156, 34); apply.keyEquivalent = @"\r"; [config.contentView addSubview:apply];
+    auto browse = [NSButton buttonWithTitle:[self ui:@"Browse…"] target:self action:@selector(browseHistory:)]; browse.frame = NSMakeRect(454, 199, 82, 30); [configForm addSubview:browse];
+    auto history = [NSButton buttonWithTitle:[self ui:@"Quota history…"] target:self action:@selector(openHistory:)]; history.frame = NSMakeRect(24, 156, 230, 32); [configForm addSubview:history];
+    auto permission = [NSButton buttonWithTitle:[self ui:@"Allow Accessibility…"] target:self action:@selector(permission:)]; permission.frame = NSMakeRect(24, 85, 230, 32); [configForm addSubview:permission];
+    auto refresh = [NSButton buttonWithTitle:[self ui:@"Refresh now"] target:self action:@selector(refresh:)]; refresh.frame = NSMakeRect(24, 30, 130, 34); [configActions addSubview:refresh];
+    configApply = [NSButton buttonWithTitle:[self ui:@"Save and apply"] target:self action:@selector(apply:)]; configApply.frame = NSMakeRect(380, 30, 156, 34); configApply.keyEquivalent = @"\r"; [configActions addSubview:configApply];
+    [configScroll.contentView scrollToPoint:NSMakePoint(0, std::max(0.0, configForm.frame.size.height - configScroll.contentView.bounds.size.height))]; [configScroll reflectScrolledClipView:configScroll.contentView];
     [config center]; [self update]; [NSApp activateIgnoringOtherApps:YES]; [config makeKeyAndOrderFront:nil];
 }
 - (void)windowWillClose:(NSNotification*)notification {
-    if (notification.object == config) { config = nil; status = nil; seconds = nil; stale = nil; home = nil; binary = nil; hostName = nil; online = nil; only = nil; show = nil; position = nil; language=nil; historyDirectory=nil; historyEnabled=nil; }
+    if (notification.object == config) { config = nil; status = nil; seconds = nil; stale = nil; home = nil; binary = nil; hostName = nil; online = nil; only = nil; show = nil; position = nil; language=nil; historyDirectory=nil; historyEnabled=nil; configForm=nil; configActions=nil; configScroll=nil; configApply=nil; }
     if (notification.object == historyWindow) { historyWindow=nil; historyMessage=nil; historyMode=nil; historyScroll=nil; historyTable=nil; historyChart=nil; historyRows={}; }
 }
 - (void)apply:(id)sender {
@@ -295,11 +319,12 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     prefs.home = home.stringValue.UTF8String ?: ""; prefs.binary = binary.stringValue.UTF8String ?: ""; prefs.host = hostName.stringValue.UTF8String ?: "";
     prefs.historyEnabled = historyEnabled.state == NSControlStateValueOn; prefs.historyDirectory = historyDirectory.stringValue.UTF8String ?: "";
     std::string directoryError;
-    if (!quota::HistoryStore::ValidateDirectory(std::filesystem::path(prefs.historyDirectory), directoryError)) { status.stringValue = [self ui:@"Cannot use history directory; choose an absolute writable path."]; return; }
+    // 禁用历史只校验配置格式；不创建目录，也不向旧失效目录写探针。
+    if (prefs.historyEnabled && !quota::HistoryStore::ValidateDirectory(std::filesystem::path(prefs.historyDirectory), directoryError)) { status.stringValue = [self ui:@"Cannot use history directory; choose an absolute writable path."]; return; }
     if (!Save(configRoot / "settings.ini", prefs)) { status.stringValue = [self ui:@"Cannot save: check absolute home path, values and permissions."]; return; }
     engine->configure(prefs); [self updateHost]; [self update];
-    if (historyWindow) [self refreshHistory:nil];
-    if(changedLanguage){[self translateMenu];[config close];[self openSettings:nil];if(historyWindow){[historyWindow close];[self openHistory:nil];}}
+    if (historyWindow) { if (prefs.historyEnabled) [self refreshHistory:nil]; else { historyRows = {}; [self renderHistory]; } }
+    if(changedLanguage){[self translateMenu];[config close];[self openSettings:nil];if(historyWindow){[historyWindow close];[self showHistory:prefs.historyEnabled];}}
 }
 - (void)browseHistory:(id)sender {
     (void)sender; auto panel = [NSOpenPanel openPanel]; panel.canChooseDirectories = YES; panel.canChooseFiles = NO; panel.allowsMultipleSelection = NO; panel.canCreateDirectories = YES;
@@ -342,7 +367,9 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (chart) historyChart.needsDisplay = YES;
 }
 - (void)openHistory:(id)sender {
-    (void)sender;
+    (void)sender; [self showHistory:YES];
+}
+- (void)showHistory:(BOOL)readHistory {
     if (historyWindow) { [self refreshHistory:nil]; [NSApp activateIgnoringOtherApps:YES]; [historyWindow makeKeyAndOrderFront:nil]; return; }
     historyWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 960, 540) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     historyWindow.title = [self ui:@"Codex Quota — History"]; historyWindow.minSize = NSMakeSize(640, 400); historyWindow.releasedWhenClosed = NO; historyWindow.delegate = self;
@@ -359,7 +386,8 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     }
     historyScroll.documentView = historyTable; [historyWindow.contentView addSubview:historyScroll];
     historyChart = [[QuotaHistoryChart alloc] initWithFrame:historyScroll.frame]; historyChart.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; historyChart.hidden = YES; [historyWindow.contentView addSubview:historyChart];
-    [self refreshHistory:nil]; [historyWindow center]; [NSApp activateIgnoringOtherApps:YES]; [historyWindow makeKeyAndOrderFront:nil];
+    if (readHistory) [self refreshHistory:nil]; else { historyRows = {}; [self renderHistory]; }
+    [historyWindow center]; [NSApp activateIgnoringOtherApps:YES]; [historyWindow makeKeyAndOrderFront:nil];
 }
 - (void)refresh:(id)sender { (void)sender; if (engine) engine->refresh(); }
 - (void)permission:(id)sender {

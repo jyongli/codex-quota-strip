@@ -20,6 +20,9 @@ int main(int argc, char** argv) {
         require(restored.seconds == 45 && restored.staleMinutes == 2 && restored.left && restored.home == settings.home, "Settings must persist across restart");
         require(restored.chinese, "Native UI language must persist across restart");
         require(restored.historyEnabled && restored.historyDirectory == settings.historyDirectory, "History enable/path settings must persist across restart");
+        settings.historyEnabled = false;
+        require(nativequota::Save(file, settings) && !nativequota::Load(file).historyEnabled, "Disabled recording must persist without deleting its directory setting");
+        settings.historyEnabled = true;
         struct stat attributes{}; stat(file.c_str(), &attributes);
         require((attributes.st_mode & 0777) == 0600, "Settings must be private to the current user");
         settings.seconds = 0; require(!nativequota::Save(file, settings) && nativequota::Load(file).seconds == 45, "Invalid settings must not overwrite valid file"); settings.seconds = 45;
@@ -57,6 +60,16 @@ int main(int argc, char** argv) {
         require(engine.state().snapshot.observed > 0, "Online refresh must resume after account change");
         history = engine.history();
         require(history.entries.size() == 2 && history.entries.back().kind == "baseline" && !history.entries.back().fiveChange, "Account changes must begin another independent history baseline");
+        auto originalHistory = settings.historyDirectory;
+        auto blocked = root / "blocked-history";
+        settings.historyDirectory = blocked.string(); engine.configure(settings);
+        { std::ofstream out(blocked); out << "synthetic existing file"; }
+        engine.refresh();
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(7);
+        while (engine.state().historyError.empty() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        require(!engine.state().historyError.empty() && engine.state().error.empty() && engine.state().snapshot.fiveHour.used == 20,
+            "History disk errors must be visible separately and preserve the successful account quota");
+        std::filesystem::remove(blocked); settings.historyDirectory = originalHistory;
         settings.online = false; engine.configure(settings);
         require(engine.state().snapshot.observed > 0, "Rename regression must begin with a real snapshot");
         std::filesystem::rename(std::filesystem::path(settings.home) / "auth.json", std::filesystem::path(settings.home) / "auth.saved");

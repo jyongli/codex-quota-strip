@@ -2,6 +2,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "FixtureProcess.h"
 #include <filesystem>
 #include <iostream>
 #include <functional>
@@ -21,7 +22,7 @@ int wmain(int argc,wchar_t** argv){
     try{
         host=newHost();check(host!=nullptr,"Fake host must exist");
         std::wstring cmd=L"\""+std::filesystem::absolute(argv[1]).wstring()+L"\" --local-only --taskbar-and-codex --top --host-pid "+std::to_wstring(GetCurrentProcessId())+L" --home \""+root.wstring()+L"\"";
-        STARTUPINFOW start{};start.cb=sizeof(start);check(CreateProcessW(nullptr,cmd.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&start,&process)!=FALSE,"Helper must start");t.pid=process.dwProcessId;
+        STARTUPINFOW start{};start.cb=sizeof(start);check(CreateQuotaFixtureProcess(cmd,root,start,process)!=FALSE,"Helper must start");t.pid=process.dwProcessId;
         check(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&t));return t.strip!=nullptr;}),"Visible strip fixture must exist");
         // 旧版无独立控制器：在同一原生所属窗口边界复现其被主窗口连带销毁的问题。
         if(!t.control){t.control=t.strip;SetWindowLongPtrW(t.strip,GWLP_HWNDPARENT,reinterpret_cast<LONG_PTR>(host));}

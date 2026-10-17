@@ -16,6 +16,8 @@ settings.ini
 status.json
 *.log
 *.jsonl
+quota-history-*.csv
+.quota-history-probe-*
 *.bak
 .vs/
 .vscode/

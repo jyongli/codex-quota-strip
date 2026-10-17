@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <iostream>
 #include <ctime>
+#include <fstream>
 
 using namespace nativequota;
 namespace {
@@ -25,6 +26,7 @@ struct App {
     GtkWidget *strip = nullptr, *stripText = nullptr, *config = nullptr, *status = nullptr;
     GtkWidget *seconds = nullptr, *stale = nullptr, *online = nullptr, *only = nullptr, *show = nullptr, *side = nullptr, *home = nullptr, *binary = nullptr, *hostName = nullptr;
     GtkWidget* language = nullptr;
+    GtkWidget *configScroll = nullptr, *configActions = nullptr, *configApply = nullptr;
     GtkWidget *historyEnabled = nullptr, *historyDirectory = nullptr;
     GtkWidget *historyWindow = nullptr, *historyStack = nullptr, *historyMessage = nullptr, *historyChart = nullptr;
     GtkListStore* historyModel = nullptr;
@@ -196,26 +198,38 @@ struct App {
         prefs.historyEnabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(app.historyEnabled));
         prefs.historyDirectory = gtk_entry_get_text(GTK_ENTRY(app.historyDirectory));
         std::string directoryError;
-        if (!quota::HistoryStore::ValidateDirectory(std::filesystem::path(prefs.historyDirectory), directoryError)) {
+        // 关闭记录必须能够摆脱失效目录；禁用时只由 Save 校验路径格式，不探测目录。
+        if (prefs.historyEnabled && !quota::HistoryStore::ValidateDirectory(std::filesystem::path(prefs.historyDirectory), directoryError)) {
             gtk_label_set_text(GTK_LABEL(app.status), app.ui("Cannot use history directory; choose an absolute writable path.")); return;
         }
         if (!Save(app.configRoot / "settings.ini", prefs)) { gtk_label_set_text(GTK_LABEL(app.status), app.ui("Cannot save: check absolute home path, values and permissions")); return; }
         app.engine.configure(prefs); app.lastSummary.clear(); app.paint(); app.position();
-        if (app.historyWindow) app.refreshHistory();
+        if (app.historyWindow) {
+            if (prefs.historyEnabled) app.refreshHistory();
+            else { app.historyRows = {}; app.renderHistory(); }
+        }
         if(changedLanguage){
             // 保存成功后重建固定标签，不丢失当前刷新和显示设置。
             for(auto indicator:app.indicators)app_indicator_set_menu(indicator,GTK_MENU(app.menu()));
             gtk_widget_destroy(app.config);app.openSettings();
-            if (app.historyWindow) { gtk_widget_destroy(app.historyWindow); app.openHistory(); }
+            if (app.historyWindow) { gtk_widget_destroy(app.historyWindow); app.openHistory(prefs.historyEnabled); }
         }
     }
     void openSettings() {
         if (config) { gtk_window_present(GTK_WINDOW(config)); return; }
-        auto prefs = engine.preferences(); config = gtk_window_new(GTK_WINDOW_TOPLEVEL); gtk_window_set_title(GTK_WINDOW(config), ui("Codex Quota — Settings")); gtk_window_set_default_size(GTK_WINDOW(config), 520, 470);
-        g_signal_connect(config, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer data) { auto& app = *static_cast<App*>(data); app.config = nullptr; app.status = nullptr; }), this);
+        auto prefs = engine.preferences(); config = gtk_window_new(GTK_WINDOW_TOPLEVEL); gtk_window_set_title(GTK_WINDOW(config), ui("Codex Quota — Settings"));
+        GdkRectangle workarea{0, 0, 1024, 768}; auto display = gtk_widget_get_display(config);
+        auto monitor = gdk_display_get_primary_monitor(display); if (!monitor) monitor = gdk_display_get_monitor_at_point(display, 0, 0);
+        if (monitor) gdk_monitor_get_workarea(monitor, &workarea);
+        gtk_window_set_default_size(GTK_WINDOW(config), 560, std::min(650, std::max(260, workarea.height - 80)));
+        g_signal_connect(config, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer data) { auto& app = *static_cast<App*>(data); app.config = nullptr; app.status = nullptr; app.configScroll = app.configActions = app.configApply = nullptr; }), this);
         auto box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14); gtk_container_set_border_width(GTK_CONTAINER(box), 24); gtk_container_add(GTK_CONTAINER(config), box);
-        status = gtk_label_new(""); gtk_label_set_xalign(GTK_LABEL(status), 0); gtk_label_set_line_wrap(GTK_LABEL(status), TRUE); gtk_box_pack_start(GTK_BOX(box), status, FALSE, FALSE, 0);
-        auto grid = gtk_grid_new(); gtk_grid_set_row_spacing(GTK_GRID(grid), 12); gtk_grid_set_column_spacing(GTK_GRID(grid), 18); gtk_box_pack_start(GTK_BOX(box), grid, TRUE, TRUE, 0);
+        // 设置内容可滚动，操作区保留在滚动区外，较矮屏幕也能直接保存。
+        configScroll = gtk_scrolled_window_new(nullptr, nullptr); gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(configScroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+        gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(configScroll), 120); gtk_box_pack_start(GTK_BOX(box), configScroll, TRUE, TRUE, 0);
+        auto content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14); gtk_container_add(GTK_CONTAINER(configScroll), content);
+        status = gtk_label_new(""); gtk_label_set_xalign(GTK_LABEL(status), 0); gtk_label_set_line_wrap(GTK_LABEL(status), TRUE); gtk_box_pack_start(GTK_BOX(content), status, FALSE, FALSE, 0);
+        auto grid = gtk_grid_new(); gtk_grid_set_row_spacing(GTK_GRID(grid), 12); gtk_grid_set_column_spacing(GTK_GRID(grid), 18); gtk_box_pack_start(GTK_BOX(content), grid, FALSE, FALSE, 0);
         int row = 0;
         auto field = [&](const char* label, GtkWidget* control) { auto title = gtk_label_new(ui(label)); gtk_label_set_xalign(GTK_LABEL(title), 0); gtk_grid_attach(GTK_GRID(grid), title, 0, row, 1, 1); gtk_widget_set_hexpand(control, TRUE); gtk_grid_attach(GTK_GRID(grid), control, 1, row++, 1, 1); return control; };
         auto check = [&](const char* label, bool enabled) { auto control = gtk_check_button_new_with_label(ui(label)); gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(control), enabled); gtk_grid_attach(GTK_GRID(grid), control, 0, row++, 2, 1); return control; };
@@ -244,9 +258,11 @@ struct App {
             gtk_widget_destroy(dialog);
         }), this);
         auto buttons = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL); gtk_button_box_set_layout(GTK_BUTTON_BOX(buttons), GTK_BUTTONBOX_END); gtk_box_pack_end(GTK_BOX(box), buttons, FALSE, FALSE, 0);
+        configActions = buttons;
         auto history = gtk_button_new_with_label(ui("Quota history…")); gtk_container_add(GTK_CONTAINER(buttons), history);
         g_signal_connect(history, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) { static_cast<App*>(data)->openHistory(); }), this);
         auto refresh = gtk_button_new_with_label(ui("Refresh now")), apply = gtk_button_new_with_label(ui("Save and apply")); gtk_container_add(GTK_CONTAINER(buttons), refresh); gtk_container_add(GTK_CONTAINER(buttons), apply);
+        configApply = apply;
         g_signal_connect(refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) { static_cast<App*>(data)->engine.refresh(); }), this); g_signal_connect(apply, "clicked", G_CALLBACK(Apply), this);
         paint(); gtk_widget_show_all(config);
     }
@@ -318,7 +334,7 @@ struct App {
         label(historyTime(start), left, bottom + 12);
         if (right - left > 360) label(historyTime(end), right - 160, bottom + 12);
     }
-    void openHistory() {
+    void openHistory(bool readHistory = true) {
         if (historyWindow) { refreshHistory(); gtk_window_present(GTK_WINDOW(historyWindow)); return; }
         historyWindow = gtk_window_new(GTK_WINDOW_TOPLEVEL); gtk_window_set_title(GTK_WINDOW(historyWindow), ui("Codex Quota — History"));
         gtk_window_set_default_size(GTK_WINDOW(historyWindow), 960, 520); gtk_window_set_resizable(GTK_WINDOW(historyWindow), TRUE);
@@ -346,7 +362,8 @@ struct App {
             static_cast<App*>(data)->drawHistory(context, gtk_widget_get_allocated_width(widget), gtk_widget_get_allocated_height(widget)); return FALSE;
         }), this);
         gtk_stack_add_titled(GTK_STACK(historyStack), historyChart, "chart", ui("Chart"));
-        refreshHistory(); gtk_widget_show_all(historyWindow);
+        if (readHistory) refreshHistory(); else { historyRows = {}; renderHistory(); }
+        gtk_widget_show_all(historyWindow);
     }
     void activate(::Window window) { unsigned long value = window; XChangeProperty(display, root, activeAtom, XA_WINDOW, 32, PropModeReplace, reinterpret_cast<unsigned char*>(&value), 1); XFlush(display); }
     void startSmoke() {
@@ -362,10 +379,21 @@ struct App {
             case 1: { int x, y; gtk_window_get_position(GTK_WINDOW(app.strip), &x, &y); if (x != 476 || y != 126) return fail("Moving host must reposition overlay"); app.activate(app.testOther); break; }
             case 2: if (gtk_widget_get_visible(app.strip)) return fail("Other foreground application must hide overlay"); app.activate(app.testHost); break;
             case 3: if (!gtk_widget_get_visible(app.strip)) return fail("Returning to host must restore overlay"); app.openSettings(); gtk_entry_set_text(GTK_ENTRY(app.historyDirectory), (app.configRoot / "selected-history").c_str()); gtk_spin_button_set_value(GTK_SPIN_BUTTON(app.seconds), 45); gtk_combo_box_set_active(GTK_COMBO_BOX(app.language),0); Apply(nullptr, &app); break;
-            case 4: if (app.engine.preferences().seconds != 45 || Load(app.configRoot / "settings.ini").seconds != 45 || !Load(app.configRoot / "settings.ini").chinese || std::string(gtk_window_get_title(GTK_WINDOW(app.config)))!="Codex 配额 — 设置") return fail("Native settings and Chinese UI must apply and persist"); gtk_combo_box_set_active(GTK_COMBO_BOX(app.language),1);Apply(nullptr,&app);if(std::string(gtk_window_get_title(GTK_WINDOW(app.config)))!="Codex Quota — Settings")return fail("English UI must restore live");XDestroyWindow(app.display, app.testHost); app.activate(0); break;
+            case 4: if (app.engine.preferences().seconds != 45 || Load(app.configRoot / "settings.ini").seconds != 45 || !Load(app.configRoot / "settings.ini").chinese || std::string(gtk_window_get_title(GTK_WINDOW(app.config)))!="Codex 配额 — 设置") return fail("Native settings and Chinese UI must apply and persist"); gtk_combo_box_set_active(GTK_COMBO_BOX(app.language),1);Apply(nullptr,&app);if(std::string(gtk_window_get_title(GTK_WINDOW(app.config)))!="Codex Quota — Settings")return fail("English UI must restore live");gtk_window_resize(GTK_WINDOW(app.config), 560, 360);XDestroyWindow(app.display, app.testHost); app.activate(0); break;
             case 5: {
                 if (gtk_widget_get_visible(app.strip)) return fail("Closed host must hide overlay");
                 if (Load(app.configRoot / "settings.ini").historyDirectory != (app.configRoot / "selected-history").string()) return fail("History directory must persist");
+                auto adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(app.configScroll));
+                if (!GTK_IS_SCROLLED_WINDOW(app.configScroll) || gtk_widget_get_parent(app.configApply) != app.configActions || gtk_widget_is_ancestor(app.configApply, app.configScroll) ||
+                    !gtk_widget_get_mapped(app.configApply) || gtk_widget_get_allocated_height(app.configApply) <= 0 || gtk_adjustment_get_upper(adjustment) <= gtk_adjustment_get_page_size(adjustment)) return fail("Settings must scroll while Save remains outside the viewport");
+                // 禁用记录既不能创建新目录，也必须能保存指向普通文件子路径的失效目录。
+                auto uncreated = app.configRoot / "disabled-uncreated";
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.historyEnabled), FALSE); gtk_entry_set_text(GTK_ENTRY(app.historyDirectory), uncreated.c_str()); Apply(nullptr, &app);
+                if (app.engine.preferences().historyEnabled || Load(app.configRoot / "settings.ini").historyEnabled || std::filesystem::exists(uncreated)) return fail("Disabled history must save without creating a directory");
+                auto blocker = app.configRoot / "history-blocker"; { std::ofstream file(blocker); file << "fixture"; }
+                auto invalidDirectory = blocker / "child"; gtk_entry_set_text(GTK_ENTRY(app.historyDirectory), invalidDirectory.c_str()); Apply(nullptr, &app);
+                if (app.engine.preferences().historyDirectory != invalidDirectory.string() || Load(app.configRoot / "settings.ini").historyDirectory != invalidDirectory.string()) return fail("Disabled history must save an inaccessible directory without a write probe");
+                gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(app.historyEnabled), TRUE); gtk_entry_set_text(GTK_ENTRY(app.historyDirectory), (app.configRoot / "selected-history").c_str()); Apply(nullptr, &app);
                 app.openHistory();
                 if (!app.historyRows.entries.empty() || gtk_tree_model_iter_n_children(GTK_TREE_MODEL(app.historyModel), nullptr) != 0) return fail("Isolated history must start empty");
                 // 合成缺失／基线／重置行，验证两个视图共用快照且可实际绘制。
@@ -382,6 +410,7 @@ struct App {
                 gtk_widget_destroy(app.historyWindow);
                 app.testPassed = true; std::cout << "PASS: Linux tray/settings, X11 focus hiding, move-following, restore and host exit\n";
                 std::cout << "PASS: Linux isolated history directory persistence, empty/list/chart states and synthetic drawing\n";
+                std::cout << "PASS: Linux disabled history avoids directory probes; scrollable settings keep Save reachable\n";
                 if (app.config) gtk_widget_destroy(app.config);
                 auto usage = std::make_shared<rusage>(); getrusage(RUSAGE_SELF, usage.get());
                 auto measurement = new std::pair<App*, std::shared_ptr<rusage>>(&app, usage);

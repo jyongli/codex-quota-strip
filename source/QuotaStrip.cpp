@@ -56,6 +56,9 @@ quota::Settings preferences;
 std::mutex preferencesMutex;
 std::atomic<bool> codexRunning{false};
 std::atomic<unsigned long long> accountGeneration{0};
+WIN32_FILE_ATTRIBUTE_DATA authMetadata{};
+bool authMetadataKnown=false,authPresent=false;
+DWORD authMetadataError=0;
 std::atomic<bool> manualRefresh{false};
 DWORD explicitHostPid = 0;
 HFONT font = nullptr, smallFont = nullptr;
@@ -87,6 +90,20 @@ std::wstring HistoryError(const std::string& error){
     if(error.empty())return {};
     return Ui(error.find("read")!=std::string::npos?L"无法读取额度变化，请检查日志目录和权限。":L"无法记录额度变化，请检查日志目录和权限。");
 }
+// 调用者持有 dataMutex；只读取认证文件元数据，并与采纳快照共用同一代际边界。
+unsigned long long ObserveAuthLocked(){
+    WIN32_FILE_ATTRIBUTE_DATA current{};bool present=GetFileAttributesExW((home+L"\\auth.json").c_str(),GetFileExInfoStandard,&current)!=FALSE;
+    DWORD error=present?ERROR_SUCCESS:GetLastError();
+    bool changed=authMetadataKnown&&(present!=authPresent||error!=authMetadataError||
+        (present&&(current.dwFileAttributes!=authMetadata.dwFileAttributes||current.nFileSizeHigh!=authMetadata.nFileSizeHigh||current.nFileSizeLow!=authMetadata.nFileSizeLow||
+        CompareFileTime(&current.ftLastWriteTime,&authMetadata.ftLastWriteTime)!=0||CompareFileTime(&current.ftCreationTime,&authMetadata.ftCreationTime)!=0)));
+    authMetadataKnown=true;authPresent=present;authMetadataError=error;authMetadata=current;
+    if(changed){
+        ++accountGeneration;historyStore.reset();data.snapshot={};data.localSnapshot={};data.error=0;data.fromServer=false;data.lastSuccess=0;data.queryError.clear();
+    }
+    return accountGeneration.load();
+}
+unsigned long long ObserveAuth(){std::lock_guard<std::mutex> guard(dataMutex);return ObserveAuthLocked();}
 
 quota::Window CurrentWindow(quota::Window w, long long now) {
     // A reset is not evidence that 100% is available. Clear until a newer server snapshot arrives.
@@ -213,8 +230,7 @@ void WatchFiles() {
             authArmed = armAuth();
             if (reset) {
                 afterAuth = quota::NowMs(); follower.clear();
-                ++accountGeneration;
-                { std::lock_guard<std::mutex> lock(dataMutex); historyStore.reset();data.snapshot = {};data.localSnapshot={};data.error=0;data.fromServer=false;data.lastSuccess=0; }
+                ObserveAuth();
                 RequestCloud();
                 publishedEvents = static_cast<unsigned long long>(-1); publish();
             }
@@ -523,13 +539,15 @@ void CloudLoop(){
         bool manual=manualRefresh.exchange(false);
         bool enabled=config.online&&!headless&&(manual||!config.onlyWithCodex||codexRunning.load());
         if(enabled){
-            auto generation=accountGeneration.load();
+            // 即使 sessions 监听尚未建立，查询前也要隔离账号，不能仅依赖 watcher 通知。
+            auto generation=ObserveAuth();
             {std::lock_guard<std::mutex> lock(dataMutex);data.refreshing=true;data.lastAttempt=quota::NowMs();}
             SignalState();
             auto result=quota::ReadAccountQuota(quota::FindCodexBinary(),home,stopEvent,15000);
             {std::lock_guard<std::mutex> lock(dataMutex);
                 data.refreshing=false;
-                if(generation==accountGeneration.load()){
+                // 元数据复核与结果采纳在同一锁下；切换期间返回的旧账号响应直接丢弃。
+                if(generation==ObserveAuthLocked()){
                     if(result.ok){data.snapshot=result.snapshot;data.fromServer=true;data.lastSuccess=result.snapshot.observed;data.queryError.clear();failures=0;historyStore.record(result.snapshot,"account");}
                     else {data.queryError=result.error;++failures;}
                 }
@@ -794,14 +812,14 @@ LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
     case WM_SIZE:LayoutSettings(h);return 0;
     case WM_VSCROLL:{
         SCROLLINFO scroll{sizeof(scroll)};scroll.fMask=SIF_ALL;GetScrollInfo(h,SB_VERT,&scroll);int next=settingsScroll;
-        switch(LOWORD(wp)){case SB_LINEUP:next-=quota_ui::theme.px(30);break;case SB_LINEDOWN:next+=quota_ui::theme.px(30);break;case SB_PAGEUP:next-=scroll.nPage;break;case SB_PAGEDOWN:next+=scroll.nPage;break;case SB_THUMBTRACK:next=scroll.nTrackPos;break;}
+        switch(LOWORD(wp)){case SB_TOP:next=0;break;case SB_BOTTOM:next=scroll.nMax;break;case SB_LINEUP:next-=quota_ui::theme.px(30);break;case SB_LINEDOWN:next+=quota_ui::theme.px(30);break;case SB_PAGEUP:next-=scroll.nPage;break;case SB_PAGEDOWN:next+=scroll.nPage;break;case SB_THUMBTRACK:next=scroll.nTrackPos;break;}
         settingsScroll=next;LayoutSettings(h);InvalidateRect(h,nullptr,FALSE);return 0;
     }
     case WM_MOUSEWHEEL:settingsScroll-=GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA*quota_ui::theme.px(60);LayoutSettings(h);InvalidateRect(h,nullptr,FALSE);return 0;
     case WM_DRAWITEM:if(quota_ui::drawItem(*reinterpret_cast<DRAWITEMSTRUCT*>(lp)))return TRUE;break;
     case WM_MEASUREITEM:if(reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->CtlID==204||reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->CtlID==208){reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->itemHeight=quota_ui::theme.px(32);return TRUE;}break;
     case WM_CTLCOLORSTATIC:{
-        using namespace quota_ui;HDC dc=reinterpret_cast<HDC>(wp);int id=GetDlgCtrlID(reinterpret_cast<HWND>(lp));SetBkMode(dc,TRANSPARENT);COLORREF color=Muted;
+        using namespace quota_ui;HDC dc=reinterpret_cast<HDC>(wp);int id=GetDlgCtrlID(reinterpret_cast<HWND>(lp));SetBkMode(dc,TRANSPARENT);COLORREF color=id==213?Error:Muted;
         if(id==211||id==212){auto s=GetData();auto w=CurrentWindow(id==211?s.snapshot.fiveHour:s.snapshot.weekly,quota::NowMs());color=!w.present||IsStale(s,quota::NowMs())?Muted:100-w.used<=20?Warning:Text;}
         if(id==207){auto messageText=caption(reinterpret_cast<HWND>(lp));color=messageText.find(L"须")!=std::wstring::npos||messageText.find(L"无法")!=std::wstring::npos||messageText.find(L"Use ")==0||messageText.find(L"Cannot")==0?Error:messageText.find(L"已保存")!=std::wstring::npos||messageText.find(L"Saved")==0?Accent:Muted;}
         bool onPanel=id==206||id==211||id==212;SetTextColor(dc,color);SetBkColor(dc,onPanel?Panel:Background);return reinterpret_cast<LRESULT>(onPanel?theme.panel:theme.background);
@@ -963,6 +981,7 @@ int WINAPI wWinMain(HINSTANCE app, HINSTANCE, PWSTR, int) {
     settingsPath = settingsDir + L"\\settings.ini";
     preferences=quota::LoadSettings(settingsPath);if(headless||localOnly)preferences.online=false;
     ConfigureHistory(preferences);
+    ObserveAuth();
     if (!headless && !overridePosition) { wchar_t saved[16]; GetPrivateProfileStringW(L"display", L"position", L"top", saved, 16, settingsPath.c_str()); leftSide = std::wstring(saved) == L"left"; }
     if (!headless && !overrideVisibility) { wchar_t saved[32]; GetPrivateProfileStringW(L"display", L"surface", L"taskbar", saved, 32, settingsPath.c_str()); showInCodex = std::wstring(saved) == L"taskbar-and-codex"; }
     preferences.showInCodex=showInCodex;preferences.leftSide=leftSide;

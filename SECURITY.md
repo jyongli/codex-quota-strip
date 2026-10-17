@@ -22,6 +22,10 @@ Windows 版读取 Codex 会话日志提取额度事件，原生预览版使用�
 
 Windows reads session logs for quota events; native previews use online queries and in-memory snapshots. Neither directly parses authentication-file contents. Local Codex app-server handles queries, with cleanup on completion, timeout or exit. Windows `--status` writes diagnostic state to an explicit path; do not commit those files. macOS window following requires user-granted Accessibility access, without Screen Recording permission.
 
+开发分支的额度历史功能在用户所选目录保存每日 CSV，字段仅包含额度百分比、变化百分点、数据时间、重置时间与来源，不包含账号标识、令牌、代理地址或对话。记录可在设置中关闭，已有文件保留；安装与卸载均不主动清理自选历史目录。CSV 不参与构建打包。
+
+The development branch records daily quota CSV files in the selected directory. Fields contain percentages, changes in percentage points, observation/recording/reset times and source, without account identifiers, tokens, proxy addresses or conversations. Recording can be disabled while retaining existing files. Installers/uninstallers do not clean custom history directories, and CSV files are excluded from packaged artifacts.
+
 ## 构建产物 / Build artifacts
 
 账号查询会从所选 Codex `config.toml` 解析代理，只将四项代理变量注入查询子进程；不会注入其他配置密钥。配置错误提示不回显代理 URL／密码，配置和代理凭据不写入公开构建信息。 / Queries parse proxies from the selected Codex config.toml and inject only the four proxy variables into the child, excluding other configured secrets. Errors do not echo proxy URLs/passwords; configurations and proxy credentials are excluded from public build information.

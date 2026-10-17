@@ -342,7 +342,7 @@ Engine::Engine(Preferences settings) : preferences_(std::move(settings)) {
 Engine::~Engine() { stop(); }
 Preferences Engine::preferences() { std::lock_guard<std::mutex> lock(mutex_); return preferences_; }
 State Engine::state() { std::lock_guard<std::mutex> lock(mutex_); return state_; }
-quota::HistoryReadResult Engine::history(size_t) { return {}; }
+quota::HistoryReadResult Engine::history(size_t maxRows) { return history_.read(maxRows); }
 void Engine::configure(Preferences value) {
     if (!Valid(value)) return;
     bool homeChanged; std::string currentHome;

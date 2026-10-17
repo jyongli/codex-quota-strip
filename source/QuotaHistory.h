@@ -200,8 +200,9 @@ inline HistoryReadResult HistoryStore::read(size_t maxRows) const {
             if (result.entries.size() == maxRows) { result.truncated = true; break; }
         }
         if (!budget) result.truncated = true;
-        std::reverse(result.entries.begin(), result.entries.end());
     } catch (...) { result.error = "Cannot read quota history; check directory and permissions"; }
+    // 即使旧文件读取失败，也保持已读部分的旧到新顺序，图表不会得到负时间跨度。
+    std::reverse(result.entries.begin(), result.entries.end());
     return result;
 }
 inline bool HistoryStore::ValidateDirectory(const std::filesystem::path& directory, std::string& error) {

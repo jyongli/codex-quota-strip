@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include "QuotaCore.h"
+#include "QuotaHistory.h"
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -23,8 +24,18 @@ BOOL CALLBACK Find(HWND h,LPARAM pointer){
 }
 void Check(bool ok,const char* message){if(!ok)throw std::runtime_error(message);}
 bool Wait(const std::function<bool()>& ready){auto deadline=GetTickCount64()+5000;do{if(ready())return true;Sleep(20);}while(GetTickCount64()<deadline);return false;}
+bool WaitCloud(const std::function<bool()>& ready){auto deadline=GetTickCount64()+12000;do{if(ready())return true;Sleep(20);}while(GetTickCount64()<deadline);return false;}
 std::wstring Caption(HWND h){wchar_t text[1024]{};GetWindowTextW(h,text,1024);return text;}
 quota::Json State(const std::filesystem::path& path){std::ifstream in(path,std::ios::binary);std::string text((std::istreambuf_iterator<char>(in)),{});try{return quota::JsonParser(text).parse();}catch(...){return {};}}
+void CheckChart(HWND chart){
+    // PrintWindow 将本测试图表渲染到内存位图，不读取屏幕或用户桌面。
+    RECT size{};GetClientRect(chart,&size);BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=size.right;info.bmiHeader.biHeight=-size.bottom;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
+    void* bits=nullptr;HDC dc=CreateCompatibleDC(nullptr);HBITMAP bitmap=CreateDIBSection(dc,&info,DIB_RGB_COLORS,&bits,nullptr,0);Check(bitmap&&bits,"Chart memory surface must allocate");auto previous=SelectObject(dc,bitmap);
+    PrintWindow(chart,dc,PW_CLIENTONLY);GdiFlush();int fivePixels=0,weeklyPixels=0;auto pixels=static_cast<DWORD*>(bits);
+    for(int y=50;y<size.bottom-52;++y)for(int x=52;x<size.right-20;++x){DWORD value=pixels[y*size.right+x]&0xffffff;if(value==0x93d5b9)++fivePixels;if(value==0xefbb79)++weeklyPixels;}
+    std::cout<<"Chart "<<size.right<<"x"<<size.bottom<<" series pixels="<<fivePixels<<","<<weeklyPixels<<" sample="<<std::hex<<pixels[(size.bottom/2)*size.right+size.right/2]<<std::dec<<"\n";
+    SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);Check(fivePixels>10&&weeklyPixels>10,"GDI history chart must draw both actual quota series");
+}
 // 只产生真实 token_count 结构的合成额度，不写入认证或会话正文。
 void Append(const std::filesystem::path& file,int fiveUsed,int weeklyUsed,long long observed){
     auto seconds=static_cast<time_t>(observed/1000);static const long long resetBase=seconds;std::tm utc{};gmtime_s(&utc,&seconds);
@@ -32,8 +43,62 @@ void Append(const std::filesystem::path& file,int fiveUsed,int weeklyUsed,long l
     std::ofstream out(file,std::ios::app|std::ios::binary);
     out<<"{\"timestamp\":\""<<timestamp<<"\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":"<<fiveUsed<<",\"window_minutes\":300,\"resets_at\":"<<resetBase+3600<<"},\"secondary\":{\"used_percent\":"<<weeklyUsed<<",\"window_minutes\":10080,\"resets_at\":"<<resetBase+604800<<"}}}}\n";
 }
+// 假服务只读测试专用的额度数字，不读取 auth.json；经过真实 app-server 管道返回。
+int FakeHistoryProvider(){
+    wchar_t home[32768]{};GetEnvironmentVariableW(L"CODEX_HOME",home,32768);auto root=std::filesystem::path(home);
+    std::string line;while(std::getline(std::cin,line)){
+        if(line.find("\"initialize\"")!=std::string::npos)std::cout<<"{\"id\":1,\"result\":{}}\n"<<std::flush;
+        else if(line.find("account/rateLimits/read")!=std::string::npos){
+            int used=0;{std::ifstream input(root/L"provider-values.txt");input>>used;}
+            {std::ofstream started(root/L"query-started");started<<"synthetic request started";}
+            while(std::filesystem::exists(root/L"delay-response"))Sleep(10);
+            std::cout<<"{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":"<<used<<",\"windowDurationMins\":300,\"resetsAt\":2100000000}}}}\n"<<std::flush;
+        }
+    }
+    return 0;
+}
+void CheckAccountIsolation(const std::filesystem::path& executable,const std::filesystem::path& self){
+    wchar_t temp[MAX_PATH]{};GetTempPathW(MAX_PATH,temp);auto root=std::filesystem::path(temp)/(L"quota-history-account-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));
+    auto profile=root/L"profile",home=root/L"home",status=root/L"status.json",settings=profile/L"CodexQuotaStrip"/L"settings.ini",binary=profile/L"OpenAI"/L"Codex"/L"bin"/L"codex.exe";
+    std::filesystem::create_directories(settings.parent_path());std::filesystem::create_directories(binary.parent_path());std::filesystem::create_directories(home);
+    {std::ofstream out(settings);out<<"[refresh]\nonline=1\nonly_with_codex=0\nseconds=120\n";}
+    std::filesystem::copy_file(self,binary);
+    auto write=[&](const wchar_t* name,const std::string& value){std::ofstream out(home/name,std::ios::binary);out<<value;};
+    write(L"auth.json","synthetic account A metadata");write(L"provider-values.txt","20");
+    PROCESS_INFORMATION app{},provider{};Target target{};
+    auto cleanup=[&]{
+        if(app.hProcess){if(target.control)SendMessageTimeoutW(target.control,WM_CLOSE,0,0,SMTO_ABORTIFHUNG,2000,nullptr);if(WaitForSingleObject(app.hProcess,5000)!=WAIT_OBJECT_0)TerminateProcess(app.hProcess,1);CloseHandle(app.hThread);CloseHandle(app.hProcess);app={};}
+        if(provider.hProcess){TerminateProcess(provider.hProcess,0);WaitForSingleObject(provider.hProcess,5000);CloseHandle(provider.hThread);CloseHandle(provider.hProcess);provider={};}
+    };
+    try{
+        auto start=[&](const std::filesystem::path& path,const std::wstring& arguments,PROCESS_INFORMATION& process){
+            wchar_t previous[32768]{};GetEnvironmentVariableW(L"LOCALAPPDATA",previous,32768);SetEnvironmentVariableW(L"LOCALAPPDATA",profile.c_str());
+            auto command=L"\""+path.wstring()+L"\" "+arguments;STARTUPINFOW startup{};startup.cb=sizeof(startup);startup.dwFlags=STARTF_USESHOWWINDOW;startup.wShowWindow=SW_HIDE;
+            BOOL created=CreateProcessW(path.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process);SetEnvironmentVariableW(L"LOCALAPPDATA",previous);Check(created!=FALSE,"Account history fixture must start");
+        };
+        // 先运行隔离 appBin 内的合成 codex.exe，使真实发现逻辑优先选它，避免调用用户的 Codex。
+        start(binary,L"--provider-host",provider);
+        start(executable,L"--home \""+home.wstring()+L"\" --status \""+status.wstring()+L"\"",app);target.pid=app.dwProcessId;
+        Check(WaitCloud([&]{EnumWindows(Find,reinterpret_cast<LPARAM>(&target));return target.control&&State(status).get("five_hour_remaining").num==80;}),"Real provider path must adopt synthetic account A without a sessions directory");
+        quota::HistoryStore history;history.configure(false,settings.parent_path()/L"history");Check(history.read().entries.size()==1,"Account A must produce one history baseline");
+        write(L"auth.json","synthetic changed account B metadata with a different length");write(L"provider-values.txt","55");SendMessageW(target.control,WM_COMMAND,3,0);
+        Check(WaitCloud([&]{return State(status).get("five_hour_remaining").num==45;}),"Manual query must adopt synthetic account B");
+        auto rows=history.read().entries;Check(rows.size()==2&&rows.back().kind=="baseline"&&!rows.back().fiveChange,"Changing auth without sessions must reset the history baseline instead of subtracting accounts");
+        // 暂停服务响应，在查询中途切换账号，迟到结果不能落盘或恢复旧账号额度。
+        std::filesystem::remove(home/L"query-started");write(L"provider-values.txt","56");write(L"delay-response","hold synthetic response");SendMessageW(target.control,WM_COMMAND,3,0);
+        Check(WaitCloud([&]{return std::filesystem::exists(home/L"query-started")&&State(status).get("refreshing").num==1;}),"Delayed synthetic query must reach the provider");
+        write(L"auth.json","synthetic account C");write(L"provider-values.txt","70");std::filesystem::remove(home/L"delay-response");
+        Check(WaitCloud([&]{auto state=State(status);return state.get("refreshing").num==0&&state.get("observed_ms").num==0;}),"Auth metadata changing during query must discard the late response");
+        Check(history.read().entries.size()==2,"Discarded account response must not write history");
+        SendMessageW(target.control,WM_COMMAND,3,0);Check(WaitCloud([&]{return State(status).get("five_hour_remaining").num==30;}),"A fresh account C query must succeed");
+        rows=history.read().entries;Check(rows.size()==3&&rows.back().kind=="baseline"&&!rows.back().fiveChange,"Fresh account C must start a separate history baseline");
+        cleanup();std::cout<<"PASS: real provider auth metadata checks with missing sessions, account baselines and late-response rejection\n";
+    }catch(...){cleanup();throw;}
+}
 }
 int wmain(int argc,wchar_t** argv){
+    if(argc>1&&std::wstring(argv[1])==L"app-server")return FakeHistoryProvider();
+    if(argc>1&&std::wstring(argv[1])==L"--provider-host"){for(;;)Sleep(INFINITE);}
     if(argc<2)return 2;
     wchar_t temp[MAX_PATH]{};GetTempPathW(MAX_PATH,temp);
     auto root=std::filesystem::path(temp)/(L"quota-history-ui-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));
@@ -53,6 +118,9 @@ int wmain(int argc,wchar_t** argv){
         std::cout<<"PASS: native history entry point\n";
         SendMessageW(target.control,WM_COMMAND,7,0);EnumWindows(Find,reinterpret_cast<LPARAM>(&target));Check(target.settings!=nullptr,"Settings must open alongside history");
         Check(GetDlgItem(target.settings,209)&&GetDlgItem(target.settings,210)&&GetDlgItem(target.settings,304)&&GetDlgItem(target.settings,305),"History settings must expose enable, directory, browse and viewer");
+        SendMessageW(target.settings,WM_VSCROLL,SB_BOTTOM,0);RECT viewport{},saveButton{};GetClientRect(target.settings,&viewport);GetWindowRect(GetDlgItem(target.settings,302),&saveButton);MapWindowPoints(nullptr,target.settings,reinterpret_cast<POINT*>(&saveButton),2);
+        Check(saveButton.top>=0&&saveButton.bottom<=viewport.bottom,"Scrolling must expose the entire Save button on a small or high-DPI screen");
+        SendMessageW(target.settings,WM_VSCROLL,SB_TOP,0);
         // 保存相对目录应失败，不能让后续写入落入不可预测的工作目录。
         SendMessageW(GetDlgItem(target.settings,210),WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"relative-history"));SendMessageW(target.settings,WM_COMMAND,302,0);
         auto validation=Caption(GetDlgItem(target.settings,207));char validationUtf8[4096]{};WideCharToMultiByte(CP_UTF8,0,validation.c_str(),-1,validationUtf8,4096,nullptr,nullptr);
@@ -73,14 +141,21 @@ int wmain(int argc,wchar_t** argv){
         Check(SendMessageW(list,LVM_GETITEMCOUNT,0,0)==1,"Open history must not poll or refresh on quota events");
         SendMessageW(target.history,WM_COMMAND,403,0);Check(SendMessageW(list,LVM_GETITEMCOUNT,0,0)==2,"Manual history refresh must read the new change");
         SendMessageW(target.history,WM_COMMAND,402,0);Check(IsWindowVisible(GetDlgItem(target.history,405))&&!IsWindowVisible(list),"Chart mode must expose the native GDI chart");
+        CheckChart(GetDlgItem(target.history,405));
         SendMessageW(target.history,WM_COMMAND,402,0);Check(IsWindowVisible(list),"List mode must remain available");
         SendMessageW(GetDlgItem(target.settings,209),BM_SETCHECK,BST_UNCHECKED,0);SendMessageW(target.settings,WM_COMMAND,302,0);
         Append(log,30,50,stamp+30);Check(Wait([&]{return State(status).get("weekly_remaining").num==50;}),"Disabled logging must not stop quota updates");
         SendMessageW(target.history,WM_COMMAND,403,0);Check(SendMessageW(list,LVM_GETITEMCOUNT,0,0)==2,"Disabled logging must preserve existing rows without writing new ones");
+        // 保存后让测试目录变成普通文件，模拟磁盘失败：只提示日志错误，额度照常更新。
+        auto blocked=root/L"blocked-history";SendMessageW(GetDlgItem(target.settings,210),WM_SETTEXT,0,reinterpret_cast<LPARAM>(blocked.c_str()));
+        SendMessageW(GetDlgItem(target.settings,209),BM_SETCHECK,BST_CHECKED,0);SendMessageW(target.settings,WM_COMMAND,302,0);
+        std::filesystem::remove(blocked);{std::ofstream out(blocked);out<<"Synthetic blocked history directory";}
+        Append(log,33,51,stamp+40);Check(Wait([&]{return State(status).get("weekly_remaining").num==49&&!Caption(GetDlgItem(target.settings,213)).empty();}),"History write failure must be reported independently while quota keeps updating");
         SendMessageW(target.settings,WM_CLOSE,0,0);SendMessageW(target.history,WM_COMMAND,402,0);Check(IsWindow(target.history),"Closing settings must preserve history resources");
         SendMessageW(target.history,WM_CLOSE,0,0);Check(WaitForSingleObject(process.hProcess,0)==WAIT_TIMEOUT,"Closing history must preserve the quota companion");
         SendMessageTimeoutW(target.control,WM_CLOSE,0,0,SMTO_ABORTIFHUNG,2000,nullptr);Check(WaitForSingleObject(process.hProcess,5000)==WAIT_OBJECT_0,"History fixture must exit cleanly");
-        CloseHandle(process.hThread);CloseHandle(process.hProcess);if(IsWindow(original))SetForegroundWindow(original);
+        CloseHandle(process.hThread);CloseHandle(process.hProcess);process={};target={};if(IsWindow(original))SetForegroundWindow(original);
+        CheckAccountIsolation(std::filesystem::absolute(argv[1]),std::filesystem::absolute(argv[0]));
         std::wcout<<L"PASS: history persistence, deduplication, manual list/chart, language, disabled capture and window lifetimes; fixture "<<root.wstring()<<L"\n";return 0;
     }catch(const std::exception& error){
         std::cerr<<"FAIL: "<<error.what()<<"\n";
