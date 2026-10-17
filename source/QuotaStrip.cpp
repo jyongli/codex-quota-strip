@@ -121,8 +121,8 @@ std::wstring LocalTime(long long milliseconds) {
     wchar_t str[64]; swprintf_s(str, L"%04u-%02u-%02u %02u:%02u:%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
     return str;
 }
-void WriteStatus(const Data& s) {
-    if (statusPath.empty()) return;
+bool WriteStatus(const Data& s) {
+    if (statusPath.empty()) return true;
     auto now = quota::NowMs(); auto five = CurrentWindow(s.snapshot.fiveHour, now), week = CurrentWindow(s.snapshot.weekly, now);
     std::string json = "{\"five_hour_remaining\":";
     auto number = [](const quota::Window& w) { return w.present ? std::to_string(std::clamp(100.0 - w.used, 0.0, 100.0)) : std::string("null"); };
@@ -149,14 +149,21 @@ void WriteStatus(const Data& s) {
     json += std::to_string(lastPlacement.left) + "," + std::to_string(lastPlacement.top) + "," + std::to_string(lastPlacement.right) + "," + std::to_string(lastPlacement.bottom) + "]}";
     std::wstring temp = statusPath + L".tmp";
     quota::Handle out(CreateFileW(temp.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
-    if (out.valid()) { DWORD written = 0; WriteFile(out, json.data(), static_cast<DWORD>(json.size()), &written, nullptr); }
+    DWORD written = 0;
+    return out.valid() && WriteFile(out, json.data(), static_cast<DWORD>(json.size()), &written, nullptr) && written == json.size();
     // Close before replace; only diagnostic files inside the explicit --status path are written.
     // The handle above is released at scope exit in the inner block in AtomicStatus below.
 }
 void AtomicStatus(const Data& s) {
     if (statusPath.empty()) return;
-    WriteStatus(s);
-    MoveFileExW((statusPath + L".tmp").c_str(), statusPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+    if (!WriteStatus(s)) return;
+    // 仅显式 --status 的一次发布在短暂共享冲突时有限重试；普通配额显示没有此路径或定时器。
+    for (DWORD delay : {0u,5u,10u,20u,40u,80u}) {
+        if (delay) { if (stopEvent) { if (WaitForSingleObject(stopEvent,delay) == WAIT_OBJECT_0) return; } else Sleep(delay); }
+        if (MoveFileExW((statusPath + L".tmp").c_str(), statusPath.c_str(), MOVEFILE_REPLACE_EXISTING)) return;
+        auto error = GetLastError();
+        if (error != ERROR_SHARING_VIOLATION && error != ERROR_ACCESS_DENIED && error != ERROR_LOCK_VIOLATION) return;
+    }
 }
 
 void WatchFiles() {

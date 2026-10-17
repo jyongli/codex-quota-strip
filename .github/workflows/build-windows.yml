@@ -134,6 +134,16 @@ jobs:
               Where-Object { $_.Extension -eq '.log' -or $_.Name -eq 'test-results.json' } |
               Copy-Item -Destination $destination
           }
+          # 监听回归仅收集此工作区的合成状态和事件，便于诊断平台时序差异。
+          if (Test-Path -LiteralPath 'source/fixtures') {
+            foreach ($fixture in Get-ChildItem -LiteralPath 'source/fixtures' -Directory) {
+              $destination = Join-Path $evidence $fixture.Name
+              New-Item -ItemType Directory -Path $destination -Force | Out-Null
+              Get-ChildItem -LiteralPath $fixture.FullName -Recurse -File |
+                Where-Object { $_.Name -in @('status.json','status.json.tmp','rollout-test.jsonl') } |
+                Copy-Item -Destination $destination
+            }
+          }
       - name: Save isolated installer diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

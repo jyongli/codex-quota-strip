@@ -24,5 +24,6 @@ foreach ($target in $targets) {
 }
 if ($Integration) {
     & (Join-Path $PSScriptRoot 'source\IntegrationTests.ps1') -Executable (Join-Path $OutputDirectory 'CodexQuotaStrip.exe')
+    & (Join-Path $PSScriptRoot 'source\DiagnosticSharingTests.ps1') -Executable (Join-Path $OutputDirectory 'CodexQuotaStrip.exe')
 }
 Write-Output 'PASS: all selected tests completed.'
