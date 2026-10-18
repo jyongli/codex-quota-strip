@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [Parameter(Mandatory)][string]$Commit,
     [Parameter(Mandatory)][string]$RunUrl,
-    [string]$Version = 'v3.0.0-preview.5'
+    [string]$Version = 'v3.0.0-preview.6'
 )
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent

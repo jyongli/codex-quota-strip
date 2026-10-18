@@ -1,6 +1,6 @@
 # 安装包选择与兼容环境
 
-**中文** | [English](installers.en.md) · [下载 v3.0.0-preview.5](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.5)
+**中文** | [English](installers.en.md) · [下载 v3.0.0-preview.6](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.6)
 
 安装前先在本机 Codex 登录。以下最低系统要求指配额程序；Codex 本身还需满足其版本的系统要求。更新或卸载前，先从托盘／菜单栏退出配额程序。
 

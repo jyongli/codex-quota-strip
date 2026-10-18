@@ -8,7 +8,7 @@ It is intended for Codex desktop or CLI users who want visible quota values and 
 
 Built with C++17 and native platform interfaces, without Electron or WebView. Chinese/English can be selected in Settings and applied immediately. This is an independently running companion, not affiliated with OpenAI. See [README.md](README.md) for the Chinese guide.
 
-**[Download v3.0.0-preview.5](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.5)** · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
+**[Download v3.0.0-preview.6](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.6)** · [What's new](docs/releases/v3.0.0-preview.6.en.md) · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
 
 Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 
@@ -29,6 +29,7 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 | Reuse Codex proxy settings | Queries read Codex proxy environment settings automatically, without configuring a separate endpoint in the companion. |
 | Quota change history | Daily CSV files in a selected directory contain remaining quotas, changes in percentage points, source and timestamps; view them as a native list or chart. |
 | Per-request usage | Records input, cached input, cache-write input, output, reasoning output and total tokens, reference account snapshots and status; switch between a list and token charts. Unknown actual charges show “—”. |
+| Source conversations | Shows conversation titles beside Time and identifiable parent/agent sources; retains raw IDs and picks up title changes on refresh. |
 | Single instance and cleanup | Repeated launches reuse an instance. Query subprocesses are cleaned up on completion, timeout or app exit. Windows identifies instances by Codex data directory; Linux/macOS use the user configuration directory. |
 
 ### Understanding values and refresh
@@ -38,7 +39,7 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 - Online quotas are queried at the configured interval. Windows also reacts to quota events in local sessions. Displays update when data arrives; freshness depends on the interval and upstream data, without guaranteed second-by-second synchronization.
 - Gray values or `*` in native previews indicate stale snapshots. Failed queries retain the last snapshot and show a failure status so it is not presented as a fresh result.
 
-### Quota history (new on the development branch)
+### Quota history
 
 Enable “Record quota changes” in Settings, choose a history directory, then save. The default is `history` under the companion configuration directory. Open history from Settings or the tray/menu bar and switch between List and Chart. Refresh only rereads local logs; it does not query the account.
 
@@ -47,9 +48,9 @@ Enable “Record quota changes” in Settings, choose a history directory, then 
 - Charts connect valid points: solid lines for continuous changes, dashed reference lines across new baselines, source changes or quota resets. Dashed lines do not imply measurable consumption; missing windows still leave gaps.
 - The viewer reads at most the latest 30 UTC days, 2000 rows and 2 MiB. Full files remain on disk without automatic deletion. Changing the directory neither moves nor deletes earlier files; select the old directory to view them again.
 - Logs contain quota values, observation/recording/reset times and source, without credentials or conversations. Disabling recording preserves existing history. Write errors are shown separately and do not replace the displayed quota.
-- This feature is not included in the preview.5 download linked above yet.
+- Included in all three platform downloads starting with v3.0.0-preview.6.
 
-### Per-work-request usage (new on the development branch)
+### Per-work-request usage and source conversations
 
 Open the history viewer from Settings or the tray/menu bar and select **Work requests**. On Windows, `CodexQuotaStrip.exe --requests` opens that view directly. The list shows completed/interrupted requests, models, token details, reference account quota changes, status and identifiers. The chart shows tokens by request. Refresh only reads local logs.
 
@@ -61,7 +62,7 @@ Open the history viewer from Settings or the tray/menu bar and select **Work req
 - Quota columns show **reference account snapshot changes**. They may include concurrent requests, and the starting snapshot may predate the request. They are not an individually attributable charge. Reset/authentication boundaries do not produce cross-boundary quota differences.
 - Local events do not provide verifiable actual charges per request: the amount is “—”, and actual amount/currency CSV fields stay empty. Subscription percentages cannot be converted into dollars; [official pricing guidance](https://learn.chatgpt.com/docs/pricing) distinguishes API token prices from subscription usage.
 - All platforms use filesystem events: initial per-file tails are limited to 256 KiB; tracked requests allow up to 8 MiB for one catch-up. Final-response text is streamed away, retaining a 32 KiB metadata-buffer limit. Gaps beyond these bounds yield partial records where identifiable; unrecoverable events may be missed, and full historical recovery is not promised. Viewing is limited to the latest 30 days, 2,000 rows/2 MiB, without additional online queries, model requests or polling.
-- History and request usage are not included in the preview.5 download linked above.
+- History, request usage and source conversations are included in v3.0.0-preview.6. Quit the previous app before updating; settings and existing CSV files are preserved.
 
 ### Low-resource design
 

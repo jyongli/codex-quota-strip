@@ -10,7 +10,7 @@ printf 'online=0\nseconds=777\n' > "$XDG_CONFIG_HOME/codex-quota-strip/settings.
 if [ "$mode" = deb ]; then
   apt-get update -qq
   apt-get install -y "$package_dir/CodexQuotaStrip-linux-x86_64.deb" xvfb dbus-x11
-  dpkg-query -W -f='${Version}\n' codex-quota-strip | grep -F '3.0.0~preview5'
+  dpkg-query -W -f='${Version}\n' codex-quota-strip | grep -F '3.0.0~preview6'
 else
   dnf install -y "$package_dir/CodexQuotaStrip-linux-x86_64.rpm" xorg-x11-server-Xvfb dbus-x11
   rpm -q codex-quota-strip
