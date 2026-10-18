@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('App','QuotaTests','SettingsTests','TrayIconTests','LifecycleTests','ConfigUiTests','WeeklyDisplayTests','UiProbe','LayerTests','VisibilityTests','ProviderProbe','ProviderEnvironmentTests','ProxyConfigTests')]
+    [ValidateSet('App','QuotaTests','HistoryTests','RequestTests','HistoryUiTests','SettingsTests','TrayIconTests','LifecycleTests','ConfigUiTests','WeeklyDisplayTests','UiProbe','LayerTests','VisibilityTests','ProviderProbe','ProviderEnvironmentTests','ProxyConfigTests')]
     [string]$Target = 'App',
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'build')
 )

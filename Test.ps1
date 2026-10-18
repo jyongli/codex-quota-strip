@@ -5,8 +5,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 & (Join-Path $PSScriptRoot 'source\BuildSdkTests.ps1')
-$targets = @('QuotaTests','SettingsTests','TrayIconTests','ProviderEnvironmentTests','ProxyConfigTests')
-if ($Integration) { $targets += @('LifecycleTests','ConfigUiTests','WeeklyDisplayTests') }
+$targets = @('QuotaTests','HistoryTests','RequestTests','SettingsTests','TrayIconTests','ProviderEnvironmentTests','ProxyConfigTests')
+if ($Integration) { $targets += @('LifecycleTests','ConfigUiTests','WeeklyDisplayTests','HistoryUiTests') }
 foreach ($target in $targets) {
     & (Join-Path $PSScriptRoot 'Build.ps1') -Target $target -OutputDirectory $OutputDirectory
 }
@@ -15,7 +15,7 @@ if ($Integration) { & (Join-Path $PSScriptRoot 'Build.ps1') -OutputDirectory $Ou
 foreach ($target in $targets) {
     $testExecutable = Join-Path $OutputDirectory ($target + '.exe')
     # 单个路径显式传参，避免 PowerShell 把标量字符串按字符展开。
-    if ($target -in @('LifecycleTests','ConfigUiTests','WeeklyDisplayTests')) {
+    if ($target -in @('LifecycleTests','ConfigUiTests','WeeklyDisplayTests','HistoryUiTests')) {
         & $testExecutable (Join-Path $OutputDirectory 'CodexQuotaStrip.exe')
     } else {
         & $testExecutable
@@ -24,5 +24,6 @@ foreach ($target in $targets) {
 }
 if ($Integration) {
     & (Join-Path $PSScriptRoot 'source\IntegrationTests.ps1') -Executable (Join-Path $OutputDirectory 'CodexQuotaStrip.exe')
+    & (Join-Path $PSScriptRoot 'source\DiagnosticSharingTests.ps1') -Executable (Join-Path $OutputDirectory 'CodexQuotaStrip.exe')
 }
 Write-Output 'PASS: all selected tests completed.'

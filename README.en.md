@@ -8,7 +8,7 @@ It is intended for Codex desktop or CLI users who want visible quota values and 
 
 Built with C++17 and native platform interfaces, without Electron or WebView. Chinese/English can be selected in Settings and applied immediately. This is an independently running companion, not affiliated with OpenAI. See [README.md](README.md) for the Chinese guide.
 
-**[Download v3.0.0-preview.5](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.5)** · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
+**[Download v3.0.0-preview.6](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.6)** · [What's new](docs/releases/v3.0.0-preview.6.en.md) · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
 
 Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 
@@ -27,6 +27,9 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 | Native settings window | Set the refresh interval, stale threshold, query conditions and display position through a GUI. Windows uses a native dark style; Linux/macOS use their platform interfaces. |
 | Local account and settings | Queries use the signed-in local Codex and selected data directory. Settings stay on the computer; authentication changes clear the previous account snapshot. |
 | Reuse Codex proxy settings | Queries read Codex proxy environment settings automatically, without configuring a separate endpoint in the companion. |
+| Quota change history | Daily CSV files in a selected directory contain remaining quotas, changes in percentage points, source and timestamps; view them as a native list or chart. |
+| Per-request usage | Records input, cached input, cache-write input, output, reasoning output and total tokens, reference account snapshots and status; switch between a list and token charts. Unknown actual charges show “—”. |
+| Source conversations | Shows conversation titles beside Time and identifiable parent/agent sources; retains raw IDs and picks up title changes on refresh. |
 | Single instance and cleanup | Repeated launches reuse an instance. Query subprocesses are cleaned up on completion, timeout or app exit. Windows identifies instances by Codex data directory; Linux/macOS use the user configuration directory. |
 
 ### Understanding values and refresh
@@ -36,12 +39,38 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 - Online quotas are queried at the configured interval. Windows also reacts to quota events in local sessions. Displays update when data arrives; freshness depends on the interval and upstream data, without guaranteed second-by-second synchronization.
 - Gray values or `*` in native previews indicate stale snapshots. Failed queries retain the last snapshot and show a failure status so it is not presented as a fresh result.
 
+### Quota history
+
+Enable “Record quota changes” in Settings, choose a history directory, then save. The default is `history` under the companion configuration directory. Open history from Settings or the tray/menu bar and switch between List and Chart. Refresh only rereads local logs; it does not query the account.
+
+- The first valid sample establishes a baseline. Subsequent records are appended only when values, windows, sources or reset times change. UTF-8 CSV files are named `quota-history-YYYY-MM-DD.csv` using UTC dates and can be opened in spreadsheet software.
+- Changes represent **remaining percentage points**: 80% → 77.5% is −2.5. Account changes and window resets start a new baseline for differences. Unknown windows remain blank and break the chart line instead of becoming zero.
+- Charts connect valid points: solid lines for continuous changes, dashed reference lines across new baselines, source changes or quota resets. Dashed lines do not imply measurable consumption; missing windows still leave gaps.
+- The viewer reads at most the latest 30 UTC days, 2000 rows and 2 MiB. Full files remain on disk without automatic deletion. Changing the directory neither moves nor deletes earlier files; select the old directory to view them again.
+- Logs contain quota values, observation/recording/reset times and source, without credentials or conversations. Disabling recording preserves existing history. Write errors are shown separately and do not replace the displayed quota.
+- Included in all three platform downloads starting with v3.0.0-preview.6.
+
+### Per-work-request usage and source conversations
+
+Open the history viewer from Settings or the tray/menu bar and select **Work requests**. On Windows, `CodexQuotaStrip.exe --requests` opens that view directly. The list shows completed/interrupted requests, models, token details, reference account quota changes, status and identifiers. The chart shows tokens by request. Refresh only reads local logs.
+
+- **Conversation** follows the time column and shows the current local title. Subagent requests show the parent title and agent name when their relationship is known. Missing titles fall back to thread IDs; unidentifiable sources show **Unknown conversation**. The final column retains raw thread/turn IDs. Refresh picks up renamed titles.
+- Titles are display-only and are excluded from CSV files. Legacy rows missing thread IDs can be resolved through the local history ID index using read-only system SQLite, for at most the newest 128 unresolved requests. Interrupted lookups, conflicting sources or unavailable indexes stay unknown. This does not scan complete conversations or add polling/network requests.
+- A request spans local `task_started` through `task_complete`/`turn_aborted`. Cumulative counter differences aggregate multiple model responses without counting duplicate snapshots. Cached input is part of input; reasoning output is part of output, so neither is added again to the total.
+- Recording uses the existing quota-history switch and selected directory, writing separate UTF-8 `request-usage-YYYY-MM-DD.csv` files. Fields contain request/thread identifiers, model, timestamps, status, tokens and numeric reference account snapshots. Prompts, responses and tool content are excluded. Files remain local and are excluded from packages.
+- Records begin with requests completed after the listener starts; there is no full-session backfill. Missing starts/baselines, counter resets or incomplete data are marked **Partial**. Unavailable tokens show “—” and chart gaps. Running requests appear after completion/interruption.
+- Quota columns show **reference account snapshot changes**. They may include concurrent requests, and the starting snapshot may predate the request. They are not an individually attributable charge. Reset/authentication boundaries do not produce cross-boundary quota differences.
+- Local events do not provide verifiable actual charges per request: the amount is “—”, and actual amount/currency CSV fields stay empty. Subscription percentages cannot be converted into dollars; [official pricing guidance](https://learn.chatgpt.com/docs/pricing) distinguishes API token prices from subscription usage.
+- All platforms use filesystem events: initial per-file tails are limited to 256 KiB; tracked requests allow up to 8 MiB for one catch-up. Final-response text is streamed away, retaining a 32 KiB metadata-buffer limit. Gaps beyond these bounds yield partial records where identifiable; unrecoverable events may be missed, and full historical recovery is not promised. Viewing is limited to the latest 30 days, 2,000 rows/2 MiB, without additional online queries, model requests or polling.
+- History, request usage and source conversations are included in v3.0.0-preview.6. Quit the previous app before updating; settings and existing CSV files are preserved.
+
 ### Low-resource design
 
 - C++17 with Win32/GTK3/AppKit, using native system tray, menu and settings interfaces.
 - Window following primarily responds to system window events, without screen recording, screenshot monitoring or a resident translation service.
 - Windows incrementally reads new session records through file notifications. Account queries run at intervals using short-lived subprocesses.
 - Translations use built-in dictionaries without extra network calls. Closing Settings leaves tray/menu-bar values and the optional strip running.
+- History reuses existing update events without extra queries or background timers. List/chart views perform bounded disk reads only when opened or manually refreshed.
 
 ### Platform differences
 

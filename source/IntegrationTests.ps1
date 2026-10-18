@@ -7,12 +7,26 @@ $status = Join-Path $fixture 'status.json'
 $log = Join-Path $sessions 'rollout-test.jsonl'
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 [System.IO.File]::WriteAllText($log, '', $utf8)
-$runner = Start-Process -FilePath $Executable -ArgumentList @('--headless','--home',('"' + $fixture + '"'),'--status',('"' + $status + '"')) -WindowStyle Hidden -PassThru
-function Read-State { Get-Content -LiteralPath $status -Raw | ConvertFrom-Json }
+# 仅覆盖这个子进程的配置目录，合成额度日志不得写入用户的真实 history。
+$startInfo = [Diagnostics.ProcessStartInfo]::new()
+$startInfo.FileName = [IO.Path]::GetFullPath($Executable)
+$startInfo.UseShellExecute = $false
+$startInfo.CreateNoWindow = $true
+$startInfo.Arguments = '--headless --home "' + $fixture + '" --status "' + $status + '"'
+$startInfo.EnvironmentVariables['LOCALAPPDATA'] = $fixture
+$runner = [Diagnostics.Process]::Start($startInfo)
+function Read-State {
+    # 状态文件通过原子重命名发布；读取方共享删除权限，不能阻止写入方替换旧文件。
+    $stream = [IO.FileStream]::new($status,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    $reader = [IO.StreamReader]::new($stream)
+    try { $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+}
 function Wait-State([scriptblock]$condition, [string]$message) {
     $deadline = [Diagnostics.Stopwatch]::StartNew()
     do { Start-Sleep -Milliseconds 20; try { $value = Read-State; if (& $condition $value) { return $value } } catch {} } while ($deadline.ElapsedMilliseconds -lt 10000)
-    throw $message
+    # 仅输出本测试的合成状态，区分解析失败、文件读取与诊断发布竞争。
+    $diagnostic = if ($null -ne $value) { $value | ConvertTo-Json -Depth 4 -Compress } else { 'no diagnostic state' }
+    throw ($message + ' Last fixture state: ' + $diagnostic)
 }
 function Make-Event([double]$weeklyUsed, $fiveUsed = $null, [long]$fiveReset = 0, [string]$time = '') {
     if (-not $time) { $time = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
@@ -30,7 +44,7 @@ try {
     [System.IO.File]::AppendAllText($log, $event + "`n", $utf8)
     do {
         Start-Sleep -Milliseconds 30
-        try { $actual = Get-Content -LiteralPath $status -Raw | ConvertFrom-Json } catch { continue }
+        try { $actual = Read-State } catch { continue }
     } while ($actual.weekly_remaining -ne 12 -and $clock.ElapsedMilliseconds -lt 10000)
     if ($actual.weekly_remaining -ne 12) { throw 'An appended real quota event must refresh the display to 12% without polling.' }
     if ($null -ne $actual.five_hour_remaining) { throw 'A missing five-hour window must remain unavailable.' }

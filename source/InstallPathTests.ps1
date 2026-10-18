@@ -12,7 +12,14 @@ $process = $null
 try {
     foreach ($file in @($first,$second)) {
         $status = Join-Path (Split-Path $file) 'status.json'
-        $process = Start-Process -FilePath $file -ArgumentList @('--taskbar','--home',('"'+$dataRoot+'"'),'--status',('"'+$status+'"')) -WindowStyle Hidden -PassThru
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $file
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.Arguments = '--taskbar --home "'+$dataRoot+'" --status "'+$status+'"'
+        # 仅让本次重定位 fixture 读取/写入自己的本机设置与变化日志。
+        $startInfo.EnvironmentVariables['LOCALAPPDATA'] = $fixture
+        $process = [Diagnostics.Process]::Start($startInfo)
         $timer = [Diagnostics.Stopwatch]::StartNew(); $state = $null
         do {
             Start-Sleep -Milliseconds 40

@@ -2,6 +2,11 @@ name: Build Desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Build and validate Windows only
+        type: boolean
+        default: false
 
 # 仅需要读取源码；工作流不使用账号凭据、不发布 Release、不写入仓库。
 permissions:
@@ -9,6 +14,7 @@ permissions:
 
 jobs:
   native:
+    if: ${{ !inputs.windows_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -108,12 +114,12 @@ jobs:
           persist-credentials: false
       - name: Build Windows x64
         run: ./Build.ps1
-      - name: Run default tests
-        run: ./Test.ps1
+      - name: Run core and isolated UI tests
+        run: ./Test.ps1 -Integration
       - name: Build Windows installation wizard
-        run: ./scripts/Build-WindowsInstaller.ps1 -Version v3.0.0-preview.5 -OutputDirectory build/installers
+        run: ./scripts/Build-WindowsInstaller.ps1 -Version v3.0.0-preview.6 -OutputDirectory build/installers
       - name: Verify isolated install, upgrade and uninstall
-        run: ./scripts/Test-WindowsInstaller.ps1 -Version v3.0.0-preview.5
+        run: ./scripts/Test-WindowsInstaller.ps1 -Version v3.0.0-preview.6
       - name: Collect isolated installer diagnostics
         if: always()
         run: |
@@ -127,6 +133,16 @@ jobs:
             Get-ChildItem -LiteralPath $fixture.FullName -File |
               Where-Object { $_.Extension -eq '.log' -or $_.Name -eq 'test-results.json' } |
               Copy-Item -Destination $destination
+          }
+          # 监听回归仅收集此工作区的合成状态和事件，便于诊断平台时序差异。
+          if (Test-Path -LiteralPath 'source/fixtures') {
+            foreach ($fixture in Get-ChildItem -LiteralPath 'source/fixtures' -Directory) {
+              $destination = Join-Path $evidence $fixture.Name
+              New-Item -ItemType Directory -Path $destination -Force | Out-Null
+              Get-ChildItem -LiteralPath $fixture.FullName -Recurse -File |
+                Where-Object { $_.Name -in @('status.json','status.json.tmp','rollout-test.jsonl') } |
+                Copy-Item -Destination $destination
+            }
           }
       - name: Save isolated installer diagnostics
         if: always()
@@ -162,7 +178,7 @@ jobs:
           retention-days: 14
   linux-compatibility:
     needs: native
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && !inputs.windows_only }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:

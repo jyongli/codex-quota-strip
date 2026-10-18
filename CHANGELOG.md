@@ -1,5 +1,19 @@
 # 变更记录 / Changelog
 
+## Unreleased
+
+## v3.0.0-preview.6 — 2026-10-18
+
+- 工作请求新增前置“所属对话”列：本地标题、子代理父对话、ID／未知回退及重命名刷新；标题不写入 CSV。尾读通过 rollout 文件名保留会话 ID，旧记录通过有界只读历史 ID 索引补认，重复来源保持未知。 / Add a leading Conversation column with local titles, subagent parents, ID/unknown fallbacks and rename refresh without CSV title storage. Preserve source UUIDs from rollout filenames and resolve legacy rows through a bounded read-only history ID index, retaining unknown values on conflicts.
+- 修复 Windows 商店包缓存路径被误识别为 Codex 主程序、导致配额条附着到插件配置／历史窗口的问题；排除自身进程并核对主程序文件名。 / Prevent Windows Store cache paths from misidentifying companion settings/history as Codex; exclude the companion process and verify the host executable name.
+- 三平台额度图连接有效点：连续变化使用实线，基线／来源／重置边界使用虚线参考连接并显示说明；缺失值保持断线。 / Connect valid quota points on all platforms using solid continuous segments and labelled dashed baseline/source/reset references, preserving missing-value gaps.
+- 修复从 Codex 切回已打开的配置／历史窗口时配额条未及时隐藏、遮挡输入的问题；复用前台事件，不新增轮询。 / Hide the quota strip immediately when returning to existing settings/history windows, preventing obstructed input without adding polling.
+- 新增每次工作请求的真实 Token 明细、参考账户额度起止快照、请求状态及原生中英文列表／图表，实际金额未知时显示“—”。 / Add real per-request token breakdowns, reference account snapshots, statuses and bilingual native list/charts; unknown actual charges show “—”.
+- 三平台文件事件监听与每日请求 CSV 沿用日志目录及开关；有界尾读、部分记录标记、重放去重、认证边界隔离，不增加模型请求或查询轮询。 / Event-driven request CSV logging on all platforms shares history preferences, with bounded tails, partial markers, replay deduplication and authentication boundaries, without additional model requests or query polling.
+- 新增自选目录的每日 CSV 额度变化日志及记录开关。 / Record quota changes in daily CSV files in a selected directory, with an enable switch.
+- Windows／Linux／macOS 新增原生中英文列表／图表查看、按需有界读取及独立日志错误。 / Native bilingual list/chart viewers, bounded on-demand reads and separate logging errors.
+- 缺失值、重置周期和账号切换保留基线，数值不变时不写盘。 / Preserve missing values and reset/account baselines; avoid writes for unchanged quotas.
+
 ## v3.0.0-preview.5 — 2026-10-13
 
 - 新增 Windows 当前用户中英安装向导，开始菜单与可选桌面快捷方式；升级／卸载保留设置和自建文件，不改自启钩子。 / Added a per-user Chinese/English Windows setup wizard and shortcuts; updates/removal preserve settings and extra files without changing startup hooks.

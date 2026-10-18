@@ -38,6 +38,29 @@ inline const wchar_t* Translate(const wchar_t* chinese, bool english) {
         {L"无法启动 Codex app-server",L"Cannot start Codex app-server"},{L"无法与 Codex app-server 通信",L"Cannot communicate with Codex"},
         {L"Codex app-server 未返回额度数据",L"Codex returned no quota data"},{L"读取 Codex 额度时发生错误",L"Codex query failed"},
         {L"账户刷新异常，请重启配额程序",L"Account refresh failed; restart the companion"}
+        ,{L"记录额度变化",L"Record quota changes"},{L"额度变化",L"Quota changes"},{L"Codex 配额 — 额度变化",L"Codex Quota — History"}
+        ,{L"日志目录",L"History directory"},{L"浏览…",L"Browse…"},{L"查看额度变化",L"View quota changes"},{L"查看变化…",L"Quota history…"}
+        ,{L"留空使用默认 history 目录",L"Leave empty to use the default history directory"},{L"选择额度日志目录",L"Choose quota history directory"}
+        ,{L"日志目录须为可写的绝对路径。",L"Use a writable absolute history directory."},{L"无法记录额度变化，请检查日志目录和权限。",L"Cannot write quota history; check directory and permissions."}
+        ,{L"无法读取额度变化，请检查日志目录和权限。",L"Cannot read quota history; check directory and permissions."}
+        ,{L"时间",L"Time"},{L"5h 剩余 / 变化",L"5h remaining / change"},{L"周剩余 / 变化",L"Weekly remaining / change"},{L"来源 / 事件",L"Source / event"}
+        ,{L"图表",L"Chart"},{L"列表",L"List"},{L"刷新记录",L"Refresh history"},{L"暂无额度变化记录",L"No quota changes recorded"}
+        ,{L"仅显示最近 30 日，最多 2000 条",L"Last 30 days, up to 2,000 entries"},{L"已截取最近记录",L"Showing recent entries only"}
+        ,{L"条记录",L"entries"},{L"账户",L"Account"},{L"本地事件",L"Local event"},{L"基线",L"Baseline"},{L"变化",L"Change"},{L"重置",L"Reset"}
+        ,{L"百分点",L"pp"},{L"已暂停记录，现有记录仍可查看",L"Recording paused; existing history is available"}
+        ,{L"工作请求",L"Work requests"},{L"查看工作请求",L"View work requests"},{L"工作请求…",L"Work requests…"}
+        ,{L"所属对话",L"Conversation"},{L"未识别对话",L"Unknown conversation"}
+        ,{L"记录额度与工作请求",L"Record quota changes and work requests"}
+        ,{L"无法读取工作请求，请检查日志目录和权限。",L"Cannot read work requests; check directory and permissions."}
+        ,{L"无法记录工作请求，请检查日志目录和权限。",L"Cannot write work requests; check directory and permissions."}
+        ,{L"Codex 配额 — 工作请求",L"Codex Quota — Work requests"},{L"暂无工作请求记录",L"No work requests recorded"}
+        ,{L"模型",L"Model"},{L"状态",L"Status"},{L"实际 Token",L"Actual tokens"},{L"输入 / 缓存命中 / 缓存写入",L"Input / cached / cache write"}
+        ,{L"输出 / 推理",L"Output / reasoning"},{L"账户快照变化 5h / 周",L"Account snapshot change 5h / weekly"},{L"实际金额",L"Actual amount"},{L"会话 / 请求",L"Thread / request"}
+        ,{L"已完成",L"Completed"},{L"已中止",L"Aborted"},{L"已中断",L"Interrupted"},{L"失败",L"Failed"},{L"未完成",L"Incomplete"},{L"部分记录",L"Partial"}
+        ,{L"实线：连续记录。虚线：重新记录、来源切换或额度重置，仅作参考连接，不表示消耗。缺失值不连线。",L"Solid: continuous records. Dashed: a new baseline, source change or quota reset; reference only, not consumption. Missing values stay disconnected."}
+        ,{L"每个工作请求已观察到的 Token",L"Observed tokens per work request"}
+        ,{L"账户快照可能包含并发工作，基线可能早于请求；不归因于单个请求。金额 — 表示未提供。",L"Account snapshots may include concurrent work and predate this request; changes are not attributed to it. Amount — means unavailable."}
+        ,{L"部分记录只包含可确认的 Token；缺失值保持 —。",L"Partial records contain confirmed tokens only; unavailable values remain —."}
     };
     for (const auto& text : entries) if (std::wcscmp(chinese,text.chinese)==0) return text.english;
     return chinese;

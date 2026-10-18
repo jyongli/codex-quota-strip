@@ -1,5 +1,7 @@
 #pragma once
 #include "../source/QuotaCore.h"
+#include "../source/QuotaHistory.h"
+#include "../source/RequestUsage.h"
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
@@ -10,15 +12,20 @@
 
 namespace nativequota {
 class AuthWatcher;
+class SessionWatcher;
 struct Preferences {
     int seconds = 120, staleMinutes = 5;
     bool online = true, onlyWithCodex = true, overlay = true, left = false, chinese = false;
     std::string home, binary, host = "Codex";
+    bool historyEnabled = true;
+    std::string historyDirectory;
 };
 struct State {
     quota::Snapshot snapshot;
     bool refreshing = false;
     std::string error;
+    std::string historyError;
+    std::string requestError;
 };
 struct Rect { double x = 0, y = 0, width = 0, height = 0; };
 struct QueryResult {
@@ -57,21 +64,30 @@ class Engine {
     std::condition_variable wake_;
     Preferences preferences_;
     State state_;
+    quota::HistoryStore history_;
+    quota::RequestStore requests_;
     std::function<void()> changed_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> queryCancelled_{false};
     std::unique_ptr<AuthWatcher> authWatcher_;
+    std::unique_ptr<SessionWatcher> sessionWatcher_;
+    unsigned sessionGeneration_ = 0;
     std::string authIdentity_;
+    // 独立于监听启动时间：已知请求不能携带上个账号的 token 或额度跨过此边界。
+    long long authBoundaryMs_ = 0;
     bool requested_ = true, manual_ = false, hostAvailable_ = false;
     unsigned generation_ = 0;
     void run();
     void checkAccount();
+    bool observeAccountLocked();
 public:
     explicit Engine(Preferences settings);
     ~Engine();
     Preferences preferences();
     State state();
+    quota::HistoryReadResult history(size_t maxRows = 2000);
+    quota::RequestReadResult requests(size_t maxRows = 2000);
     void configure(Preferences settings);
     void hostAvailable(bool value);
     void start(std::function<void()> changed);

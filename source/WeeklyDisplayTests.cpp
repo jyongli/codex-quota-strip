@@ -2,6 +2,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "FixtureProcess.h"
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -48,7 +49,7 @@ int wmain(int argc, wchar_t** argv) {
         ShowWindow(host, SW_SHOW);check(foreground(host),"Synthetic host must become foreground before testing its overlay");
         std::wstring command = L"\"" + std::filesystem::absolute(argv[1]).wstring() + L"\" --local-only --taskbar-and-codex --left --host-pid " + std::to_wstring(GetCurrentProcessId()) + L" --home \"" + root.wstring() + L"\" --status \"" + status.wstring() + L"\"";
         STARTUPINFOW start{}; start.cb = sizeof(start);
-        check(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &start, &process), "Weekly display fixture must launch"); target.pid = process.dwProcessId;
+        check(CreateQuotaFixtureProcess(command, root, start, process), "Weekly display fixture must launch"); target.pid = process.dwProcessId;
         check(wait([&] { EnumWindows(find, reinterpret_cast<LPARAM>(&target)); auto current = state(status); return target.controller && current.get("watching").num && current.get("tray_icons").num == 2; }), "Unknown startup must retain both placeholders");
         auto append = [&](const std::string& secondary, int used) {
             SYSTEMTIME now; GetSystemTime(&now); char timestamp[64]; sprintf_s(timestamp, "%04u-%02u-%02uT%02u:%02u:%02u.%03uZ", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond, now.wMilliseconds);

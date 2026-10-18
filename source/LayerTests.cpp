@@ -2,6 +2,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "FixtureProcess.h"
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -27,7 +28,7 @@ int wmain(int argc,wchar_t** argv){
     try{
         std::wstring command=L"\""+std::filesystem::absolute(argv[1]).wstring()+L"\" --local-only --taskbar-and-codex --top --home \""+root.wstring()+L"\"";
         STARTUPINFOW start{};start.cb=sizeof(start);start.dwFlags=STARTF_USESHOWWINDOW;start.wShowWindow=SW_HIDE;
-        check(CreateProcessW(nullptr,command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&start,&process)!=FALSE,"Fixture must start");target.pid=process.dwProcessId;
+        check(CreateQuotaFixtureProcess(command,root,start,process)!=FALSE,"Fixture must start");target.pid=process.dwProcessId;
         check(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&target));return target.window!=nullptr;}),"Fixture must expose its window");
         check(wait([&]{return unobscured(target.window);}),"Quota bar must be the actual top window at its screen position while Codex is foreground");
         std::cout<<"PASS: quota bar is visibly above the real Codex window\n";
