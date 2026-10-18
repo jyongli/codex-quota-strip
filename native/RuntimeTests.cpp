@@ -94,6 +94,7 @@ int main(int argc, char** argv) {
         // 在线查询关闭时，新建多级会话目录和追加完成事件仍应触发真实 token 记录。
         settings.home = (root / "request-home").string(); settings.historyDirectory = (root / "request-history").string(); settings.online = false;
         std::filesystem::create_directories(settings.home);
+        { std::ofstream auth(std::filesystem::path(settings.home) / "auth.json"); auth << "request-account-a"; }
         nativequota::Engine listener(settings); listener.start([] {});
         auto sessions = std::filesystem::path(settings.home) / "sessions/2099/01/01"; std::filesystem::create_directories(sessions);
         auto session = sessions / "rollout-runtime.jsonl";
@@ -104,10 +105,36 @@ int main(int argc, char** argv) {
         require(requests.entries.size() == 1 && requests.entries[0].turnId == "runtime-turn" && requests.entries[0].tokens && requests.entries[0].tokens->input == 100 && requests.entries[0].tokens->total == 130,
             "Native event-driven session follower must record real request tokens with online queries disabled");
         require(listener.state().snapshot.observed == 0, "Session logging must not launch an account query");
+        // 旧请求仍在文件尾部：即便认证通知先处理，重放后的旧开始行也不能跨账号接上新 token／额度。
+        auto crossing = sessions / "rollout-auth-boundary.jsonl"; auto start = nativequota::NowMs() + 10;
+        auto prefix = requestFixture("cross-account-turn", start); prefix.erase(prefix.rfind("{\"timestamp\":"));
+        auto sample = "{\"timestamp\":\"" + iso(start) + "\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":0,\"cached_input_tokens\":0,\"output_tokens\":0,\"reasoning_output_tokens\":0,\"total_tokens\":0}},\"rate_limits\":{\"primary\":{\"used_percent\":20,\"window_minutes\":300,\"resets_at\":2000000000}}}}\n";
+        { std::ofstream out(crossing); out << sample << prefix; }
+        // 给旧账号的真实文件事件留出处理机会；接下来明确等待 auth 状态通知再完成旧请求。
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        { std::ofstream replacement(std::filesystem::path(settings.home) / "auth.next"); replacement << "request-account-b"; }
+        std::filesystem::rename(std::filesystem::path(settings.home) / "auth.next", std::filesystem::path(settings.home) / "auth.json");
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (listener.state().error != "Account changed; waiting for new quota" && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        require(listener.state().error == "Account changed; waiting for new quota", "Auth replacement must be observed before replay completion regression");
+        auto ready = sessions / "rollout-new-account-ready.jsonl";
+        { std::ofstream out(ready); out << requestFixture("new-account-ready", nativequota::NowMs() + 10); }
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        auto hasTurn = [&](const char* turn) { auto rows = listener.requests(); return std::any_of(rows.entries.begin(), rows.entries.end(), [&](const auto& row) { return row.turnId == turn; }); };
+        while (!hasTurn("new-account-ready") && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        require(hasTurn("new-account-ready"), "New account listener generation must process real session events");
+        auto completion = nativequota::NowMs() + 10;
+        { std::ofstream out(crossing, std::ios::app);
+          out << "{\"timestamp\":\"" << iso(completion) << "\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":200,\"cached_input_tokens\":40,\"output_tokens\":60,\"reasoning_output_tokens\":10,\"total_tokens\":260}},\"rate_limits\":{\"primary\":{\"used_percent\":40,\"window_minutes\":300,\"resets_at\":2000000000}}}}\n";
+          out << "{\"timestamp\":\"" << iso(completion) << "\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"cross-account-turn\"}}\n"; }
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!hasTurn("cross-account-turn") && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        require(!hasTurn("cross-account-turn"), "Auth boundary must reject a replayed old-account request instead of combining cross-account tokens or quota");
+        const auto recordedBeforeDisable = listener.requests().entries.size();
         settings.historyEnabled = false; listener.configure(settings);
         { std::ofstream out(session, std::ios::app); out << requestFixture("disabled-turn", nativequota::NowMs() + 10); }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        require(listener.requests().entries.size() == 1, "Disabled logging must stop following session appends"); listener.stop();
+        require(listener.requests().entries.size() == recordedBeforeDisable, "Disabled logging must stop following session appends"); listener.stop();
         // root 完全由测试创建，包含新监听器的会话与日志目录，结束后统一清理。
         std::filesystem::remove_all(root);
         std::cout << "PASS: preferences, input bounds, overlay geometry, expiry, single instance and blocking refresh lifecycle\n";

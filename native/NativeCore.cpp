@@ -16,6 +16,7 @@
 #include <sstream>
 #include <cctype>
 #include <cstring>
+#include <set>
 #ifdef __APPLE__
 #include <sys/event.h>
 #else
@@ -152,6 +153,167 @@ public:
     void home(std::string value) { { std::lock_guard<std::mutex> lock(mutex_); home_ = std::move(value); } signal(); }
     void stop() { stopping_ = true; signal(); if (thread_.joinable()) thread_.join(); }
     ~AuthWatcher() { stop(); }
+};
+// 会话监听只解析有界尾部的元数据。Linux 监听目录事件，macOS 同时监听目录与活跃文件；空闲时阻塞。
+class SessionWatcher {
+    struct Configuration { std::filesystem::path home; bool enabled = false; unsigned generation = 0; long long cutoff = 0; };
+    struct File {
+        Fd descriptor;
+        dev_t device = 0; ino_t inode = 0; off_t offset = 0;
+        long long modified = 0;
+        quota::RequestTracker tracker;
+        quota::MetadataLines lines;
+        explicit File(long long cutoff) : tracker(cutoff) {}
+    };
+    std::mutex mutex_;
+    Configuration configuration_;
+    Fd wakeRead_, wakeWrite_;
+    std::atomic<bool> stopping_{false};
+    std::thread thread_;
+    std::function<void(unsigned, const quota::RequestEntry&)> accept_;
+    std::function<void(unsigned, const std::string&)> problem_;
+    void signal() { char byte = 1; (void)write(wakeWrite_.value, &byte, 1); }
+    void drain() { char bytes[128]; while (read(wakeRead_.value, bytes, sizeof(bytes)) > 0) {} }
+    Configuration current() { std::lock_guard<std::mutex> lock(mutex_); return configuration_; }
+    static long long modified(const struct stat& value) {
+#ifdef __APPLE__
+        return value.st_mtimespec.tv_sec * 1000000000LL + value.st_mtimespec.tv_nsec;
+#else
+        return value.st_mtim.tv_sec * 1000000000LL + value.st_mtim.tv_nsec;
+#endif
+    }
+    void run() {
+        while (!stopping_.load()) {
+            auto configuration = current();
+            if (!configuration.enabled) { pollfd descriptor{wakeRead_.value, POLLIN, 0}; if (poll(&descriptor, 1, -1) > 0) drain(); continue; }
+#ifdef __APPLE__
+            Fd notification(kqueue()); if (notification.value >= 0) fcntl(notification.value, F_SETFD, FD_CLOEXEC);
+#else
+            Fd notification(inotify_init1(IN_NONBLOCK | IN_CLOEXEC));
+#endif
+            const auto sessions = configuration.home / "sessions";
+            std::map<int, std::filesystem::path> directories;
+            std::map<std::filesystem::path, Fd> folderDescriptors;
+            std::set<std::filesystem::path> watched;
+            std::map<std::filesystem::path, std::unique_ptr<File>> files;
+            const std::string watchError = "Cannot watch Codex sessions; check home directory and permissions";
+            auto inside = [&](const std::filesystem::path& path) { auto relative = path.lexically_relative(sessions); return !relative.empty() && !relative.is_absolute() && *relative.begin() != ".."; };
+            auto addDirectory = [&](const std::filesystem::path& path) {
+                if (watched.count(path)) return true;
+                if (watched.size() >= 512 || notification.value < 0) return false;
+#ifdef __APPLE__
+                Fd folder(open(path.c_str(), O_EVTONLY | O_CLOEXEC | O_NOFOLLOW)); if (folder.value < 0) return false;
+                struct kevent event; EV_SET(&event, folder.value, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE | NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE, 0, nullptr);
+                if (kevent(notification.value, &event, 1, nullptr, 0, nullptr)) return false;
+                directories[folder.value] = path; folderDescriptors.emplace(path, std::move(folder));
+#else
+                int id = inotify_add_watch(notification.value, path.c_str(), IN_CREATE | IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF | IN_ONLYDIR | IN_DONT_FOLLOW);
+                if (id < 0) return false; directories[id] = path;
+#endif
+                watched.insert(path); return true;
+            };
+            auto follow = [&](const std::filesystem::path& path) {
+                Fd descriptor(open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW)); struct stat attributes{};
+                if (descriptor.value < 0 || fstat(descriptor.value, &attributes) || !S_ISREG(attributes.st_mode)) return;
+                auto found = files.find(path);
+                if (found == files.end() || found->second->device != attributes.st_dev || found->second->inode != attributes.st_ino) {
+                    if (found != files.end()) files.erase(found);
+                    if (files.size() >= 16) {
+                        auto oldest = std::min_element(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.second->modified < b.second->modified; });
+                        if (oldest->second->modified > modified(attributes)) return; files.erase(oldest);
+                    }
+                    auto file = std::make_unique<File>(configuration.cutoff); file->descriptor = std::move(descriptor); file->device = attributes.st_dev; file->inode = attributes.st_ino;
+                    file->offset = std::max<off_t>(0, attributes.st_size - 256 * 1024); file->lines.reset(file->offset > 0);
+#ifdef __APPLE__
+                    struct kevent event; EV_SET(&event, file->descriptor.value, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE | NOTE_EXTEND | NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE, 0, nullptr);
+                    if (kevent(notification.value, &event, 1, nullptr, 0, nullptr)) { problem_(configuration.generation, watchError); return; }
+#endif
+                    found = files.emplace(path, std::move(file)).first;
+                }
+                auto& file = *found->second; file.modified = modified(attributes);
+                if (attributes.st_size < file.offset || attributes.st_size - file.offset > 256 * 1024) {
+                    // 截断／一次性大追加时重新建立部分基线，不把被跳过的 token 猜入本次请求。
+                    file.offset = std::max<off_t>(0, attributes.st_size - 256 * 1024); file.tracker.reset(); file.lines.reset(file.offset > 0);
+                }
+                char bytes[8192]; size_t remaining = 256 * 1024;
+                while (remaining && !stopping_.load()) {
+                    auto count = pread(file.descriptor.value, bytes, std::min(remaining, sizeof(bytes)), file.offset);
+                    if (count < 0 && errno == EINTR) continue; if (count <= 0) break;
+                    file.offset += count; remaining -= static_cast<size_t>(count);
+                    file.lines.feed(bytes, static_cast<size_t>(count), [&](const std::string& line) {
+                        // Tracker 只保存数字、标识与模型，不将提示词或会话正文写入日志。
+                        file.tracker.consume(line, [&](const quota::RequestEntry& entry) { accept_(configuration.generation, entry); });
+                    });
+                }
+            };
+            auto discover = [&](const std::filesystem::path& directory) {
+                std::vector<std::pair<long long, std::filesystem::path>> candidates; size_t budget = 8192;
+                std::function<void(const std::filesystem::path&, int)> scan = [&](const std::filesystem::path& path, int depth) {
+                    if (!budget || depth > 8 || !inside(path)) return;
+                    std::error_code error; auto type = std::filesystem::symlink_status(path, error);
+                    if (error || !std::filesystem::is_directory(type) || !addDirectory(path)) return;
+                    std::vector<std::filesystem::path> children;
+                    for (std::filesystem::directory_iterator it(path, std::filesystem::directory_options::skip_permission_denied, error), end; !error && it != end && budget; it.increment(error)) {
+                        --budget; auto status = it->symlink_status(error); if (error) break;
+                        if (std::filesystem::is_directory(status)) { if (!watched.count(it->path())) children.push_back(it->path()); }
+                        else if (std::filesystem::is_regular_file(status) && it->path().extension() == ".jsonl") {
+                            struct stat value{}; if (!lstat(it->path().c_str(), &value)) candidates.emplace_back(modified(value), it->path());
+                        }
+                    }
+                    // 日期目录从新到旧注册；总目录、条目、活跃文件和每次读取均有上限。
+                    std::sort(children.rbegin(), children.rend()); for (const auto& child : children) scan(child, depth + 1);
+                };
+                scan(directory, 0); std::sort(candidates.rbegin(), candidates.rend());
+                for (size_t index = 0; index < std::min<size_t>(16, candidates.size()); ++index) follow(candidates[index].second);
+            };
+            std::error_code error; auto base = sessions;
+            while (!base.empty() && !std::filesystem::is_directory(base, error)) { auto parent = base.parent_path(); if (parent == base) break; base = parent; error.clear(); }
+            bool installed = addDirectory(base); problem_(configuration.generation, installed ? "" : watchError);
+            if (installed) discover(sessions);
+            bool rebuild = false;
+            while (!stopping_.load() && !rebuild) {
+                pollfd descriptors[2]{{wakeRead_.value, POLLIN, 0}, {installed ? notification.value : -1, POLLIN, 0}};
+                int ready = poll(descriptors, 2, -1); if (ready < 0 && errno == EINTR) continue; if (ready < 0) break;
+                if (descriptors[0].revents) { drain(); break; }
+                if (!descriptors[1].revents) continue;
+#ifdef __APPLE__
+                struct kevent events[32]; timespec immediate{}; int count = kevent(notification.value, nullptr, 0, events, 32, &immediate);
+                for (int index = 0; index < count; ++index) {
+                    auto directory = directories.find(static_cast<int>(events[index].ident));
+                    if (directory != directories.end()) {
+                        if (events[index].fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) { rebuild = true; continue; }
+                        discover(inside(directory->second) ? directory->second : sessions);
+                    } else {
+                        std::filesystem::path path; for (const auto& file : files) if (file.second->descriptor.value == static_cast<int>(events[index].ident)) { path = file.first; break; }
+                        if (!path.empty()) follow(path);
+                    }
+                }
+#else
+                alignas(inotify_event) char bytes[16384]; auto count = read(notification.value, bytes, sizeof(bytes));
+                for (size_t offset = 0; count > 0 && offset + sizeof(inotify_event) <= static_cast<size_t>(count);) {
+                    auto event = reinterpret_cast<const inotify_event*>(bytes + offset); offset += sizeof(inotify_event) + event->len;
+                    if (event->mask & (IN_Q_OVERFLOW | IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED)) { rebuild = true; continue; }
+                    auto directory = directories.find(event->wd); if (directory == directories.end()) continue;
+                    if (!inside(directory->second)) { discover(sessions); continue; }
+                    auto path = directory->second / (event->len ? event->name : "");
+                    if (event->mask & IN_ISDIR) { if (event->mask & (IN_CREATE | IN_MOVED_TO)) discover(path); }
+                    else if (path.extension() == ".jsonl" && event->mask & (IN_CREATE | IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO)) follow(path);
+                }
+#endif
+            }
+        }
+    }
+public:
+    SessionWatcher(const std::string& home, bool enabled, unsigned generation, std::function<void(unsigned, const quota::RequestEntry&)> accept, std::function<void(unsigned, const std::string&)> problem)
+        : configuration_{home, enabled, generation, NowMs()}, accept_(std::move(accept)), problem_(std::move(problem)) {
+        auto descriptors = Pipe(); wakeRead_ = std::move(descriptors.first); wakeWrite_ = std::move(descriptors.second);
+        fcntl(wakeRead_.value, F_SETFL, O_NONBLOCK); fcntl(wakeWrite_.value, F_SETFL, O_NONBLOCK); thread_ = std::thread(&SessionWatcher::run, this);
+    }
+    void configure(const std::string& home, bool enabled, unsigned generation) {
+        { std::lock_guard<std::mutex> lock(mutex_); if (generation < configuration_.generation) return; configuration_ = {home, enabled, generation, NowMs()}; } signal();
+    }
+    void stop() { stopping_ = true; signal(); if (thread_.joinable()) thread_.join(); }
+    ~SessionWatcher() { stop(); }
 };
 long long NowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 std::filesystem::path ConfigDirectory() {
@@ -338,24 +500,30 @@ QueryResult Query(const std::string& binary, const std::string& home, const std:
 
 Engine::Engine(Preferences settings) : preferences_(std::move(settings)) {
     history_.configure(preferences_.historyEnabled, preferences_.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(preferences_.historyDirectory));
+    requests_.configure(preferences_.historyEnabled, preferences_.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(preferences_.historyDirectory));
 }
 Engine::~Engine() { stop(); }
 Preferences Engine::preferences() { std::lock_guard<std::mutex> lock(mutex_); return preferences_; }
 State Engine::state() { std::lock_guard<std::mutex> lock(mutex_); return state_; }
 quota::HistoryReadResult Engine::history(size_t maxRows) { return history_.read(maxRows); }
-quota::RequestReadResult Engine::requests(size_t maxRows) { (void)maxRows; return {}; }
+quota::RequestReadResult Engine::requests(size_t maxRows) { return requests_.read(maxRows); }
 void Engine::configure(Preferences value) {
     if (!Valid(value)) return;
-    bool homeChanged; std::string currentHome;
+    bool homeChanged, sessionsChanged, recording; unsigned sessionGeneration; std::string currentHome;
     { std::lock_guard<std::mutex> lock(mutex_); homeChanged = value.home != preferences_.home; if (homeChanged) { state_.snapshot = {}; authIdentity_ = AuthStamp(value.home); history_.reset(); }
+      sessionsChanged = homeChanged || value.historyEnabled != preferences_.historyEnabled || value.historyDirectory != preferences_.historyDirectory;
+      if (sessionsChanged) ++sessionGeneration_;
       history_.configure(value.historyEnabled, value.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(value.historyDirectory));
+      requests_.configure(value.historyEnabled, value.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(value.historyDirectory));
+      state_.requestError = requests_.error(); recording = value.historyEnabled; sessionGeneration = sessionGeneration_;
       state_.historyError = history_.error(); preferences_ = std::move(value); currentHome = preferences_.home; ++generation_; queryCancelled_ = true; requested_ = true; }
     if (homeChanged && authWatcher_) authWatcher_->home(currentHome);
+    if (sessionsChanged && sessionWatcher_) sessionWatcher_->configure(currentHome, recording, sessionGeneration);
     wake_.notify_one();
 }
 void Engine::checkAccount() {
     if (stop_.load()) return;
-    std::string home;
+    std::string home; bool recording = false; unsigned sessionGeneration = 0;
     { std::lock_guard<std::mutex> lock(mutex_); home = preferences_.home; }
     auto identity = AuthStamp(home); bool changed = false;
     {
@@ -363,20 +531,32 @@ void Engine::checkAccount() {
         if (home == preferences_.home && identity != authIdentity_) {
             authIdentity_ = identity; state_.snapshot = {}; state_.error = "Account changed; waiting for new quota";
             history_.reset();
+            recording = preferences_.historyEnabled; sessionGeneration = ++sessionGeneration_;
             ++generation_; queryCancelled_ = true; requested_ = true; changed = true;
         }
     }
-    if (changed) { wake_.notify_one(); if (changed_) changed_(); }
+    if (changed) { if (sessionWatcher_) sessionWatcher_->configure(home, recording, sessionGeneration); wake_.notify_one(); if (changed_) changed_(); }
 }
 void Engine::hostAvailable(bool value) { { std::lock_guard<std::mutex> lock(mutex_); if (hostAvailable_ == value) return; hostAvailable_ = value; requested_ = true; } wake_.notify_one(); }
 void Engine::start(std::function<void()> changed) {
     changed_ = std::move(changed);
     { std::lock_guard<std::mutex> lock(mutex_); authIdentity_ = AuthStamp(preferences_.home); }
+    sessionWatcher_ = std::make_unique<SessionWatcher>(preferences_.home, preferences_.historyEnabled, sessionGeneration_,
+        [this](unsigned generation, const quota::RequestEntry& entry) {
+            bool notify = false;
+            { std::lock_guard<std::mutex> lock(mutex_); if (stop_.load() || generation != sessionGeneration_ || !preferences_.historyEnabled) return;
+              auto previous = state_.requestError; notify = requests_.record(entry); state_.requestError = requests_.error(); notify = notify || previous != state_.requestError; }
+            if (notify && changed_) changed_();
+        }, [this](unsigned generation, const std::string& error) {
+            bool notify = false;
+            { std::lock_guard<std::mutex> lock(mutex_); if (stop_.load() || generation != sessionGeneration_) return; auto message = error.empty() ? requests_.error() : error; notify = state_.requestError != message; state_.requestError = message; }
+            if (notify && changed_) changed_();
+        });
     authWatcher_ = std::make_unique<AuthWatcher>(preferences_.home, [this] { checkAccount(); });
     thread_ = std::thread(&Engine::run, this);
 }
 void Engine::refresh() { { std::lock_guard<std::mutex> lock(mutex_); requested_ = true; manual_ = true; } wake_.notify_one(); }
-void Engine::stop() { stop_ = true; queryCancelled_ = true; wake_.notify_one(); if (authWatcher_) authWatcher_->stop(); if (thread_.joinable()) thread_.join(); }
+void Engine::stop() { stop_ = true; queryCancelled_ = true; wake_.notify_one(); if (authWatcher_) authWatcher_->stop(); if (sessionWatcher_) sessionWatcher_->stop(); if (thread_.joinable()) thread_.join(); }
 void Engine::run() {
     unsigned failures = 0; auto nextDue = std::chrono::steady_clock::now(), lastAttempt = nextDue - std::chrono::seconds(5);
     std::string previousHome, previousAuth;

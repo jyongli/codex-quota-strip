@@ -12,6 +12,7 @@
 
 namespace nativequota {
 class AuthWatcher;
+class SessionWatcher;
 struct Preferences {
     int seconds = 120, staleMinutes = 5;
     bool online = true, onlyWithCodex = true, overlay = true, left = false, chinese = false;
@@ -64,11 +65,14 @@ class Engine {
     Preferences preferences_;
     State state_;
     quota::HistoryStore history_;
+    quota::RequestStore requests_;
     std::function<void()> changed_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> queryCancelled_{false};
     std::unique_ptr<AuthWatcher> authWatcher_;
+    std::unique_ptr<SessionWatcher> sessionWatcher_;
+    unsigned sessionGeneration_ = 0;
     std::string authIdentity_;
     bool requested_ = true, manual_ = false, hostAvailable_ = false;
     unsigned generation_ = 0;

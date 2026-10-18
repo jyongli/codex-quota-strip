@@ -31,6 +31,8 @@ struct App {
     GtkWidget *historyWindow = nullptr, *historyStack = nullptr, *historyMessage = nullptr, *historyChart = nullptr;
     GtkListStore* historyModel = nullptr;
     quota::HistoryReadResult historyRows;
+    GtkWidget *historyKind = nullptr, *historyTable = nullptr;
+    quota::RequestReadResult requestRows;
     AppIndicator* indicators[2]{};
     std::filesystem::path configRoot, cache;
     Display* display = nullptr;
@@ -44,7 +46,7 @@ struct App {
     explicit App(Options value) : options(std::move(value)), engine(options.preferences) {
         configRoot = options.smoke ? std::filesystem::temp_directory_path() / ("quota-linux-smoke-" + std::to_string(getpid())) : ConfigDirectory();
         // 测试始终使用隔离目录，构造 Engine 后、启动查询前覆盖默认日志路径。
-        if (options.smoke) { auto prefs = engine.preferences(); prefs.historyDirectory = (configRoot / "history").string(); engine.configure(prefs); }
+        if (options.smoke) { auto prefs = engine.preferences(); prefs.home = (configRoot / "home").string(); prefs.historyDirectory = (configRoot / "history").string(); engine.configure(prefs); }
         cache = std::filesystem::path(g_get_user_cache_dir()) / "codex-quota-strip" / std::to_string(getpid());
         std::filesystem::create_directories(cache); chmod(cache.c_str(), 0700);
     }
@@ -183,6 +185,7 @@ struct App {
         if (status) {
             std::string message = summary + "\n" + (state.refreshing ? ui("Refreshing…") : !state.error.empty() ? ui(state.error.c_str()) : !prefs.online ? ui("Online queries disabled") : ui("Account quota"));
             if (!state.historyError.empty()) message += "\n" + std::string(ui(state.historyError.c_str()));
+            if (!state.requestError.empty()) message += "\n" + std::string(ui(state.requestError.c_str()));
             if (!x11) message += ui("\nWayland: overlay/host detection unavailable. Scheduling uses the interval.");
             gtk_label_set_text(GTK_LABEL(status), message.c_str());
         }
@@ -206,7 +209,7 @@ struct App {
         app.engine.configure(prefs); app.lastSummary.clear(); app.paint(); app.position();
         if (app.historyWindow) {
             if (prefs.historyEnabled) app.refreshHistory();
-            else { app.historyRows = {}; app.renderHistory(); }
+            else { app.historyRows = {}; app.requestRows = {}; app.renderHistory(); }
         }
         if(changedLanguage){
             // 保存成功后重建固定标签，不丢失当前刷新和显示设置。
@@ -242,7 +245,7 @@ struct App {
         binary = field("Codex executable (blank = auto)", gtk_entry_new()); gtk_entry_set_text(GTK_ENTRY(binary), prefs.binary.c_str());
         hostName = field("Host window class contains", gtk_entry_new()); gtk_entry_set_text(GTK_ENTRY(hostName), prefs.host.c_str());
         language=field("Language",gtk_combo_box_text_new());gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language),"中文");gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(language),"English");gtk_combo_box_set_active(GTK_COMBO_BOX(language),prefs.chinese?0:1);
-        historyEnabled = check("Record quota changes", prefs.historyEnabled);
+        historyEnabled = check("Record quota changes and request tokens", prefs.historyEnabled);
         auto directoryBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
         historyDirectory = gtk_entry_new(); gtk_entry_set_text(GTK_ENTRY(historyDirectory), prefs.historyDirectory.c_str()); gtk_widget_set_hexpand(historyDirectory, TRUE);
         gtk_box_pack_start(GTK_BOX(directoryBox), historyDirectory, TRUE, TRUE, 0);
@@ -278,10 +281,35 @@ struct App {
         if (!value) return "—";
         char text[32]; std::snprintf(text, sizeof(text), "%+.1f", *value); return text;
     }
+    bool showingRequests() const { return historyKind && gtk_combo_box_get_active(GTK_COMBO_BOX(historyKind)) == 1; }
+    // 额度和请求表格复用原生列表模型，未知费用和未知 token 均保留破折号。
+    void renderRequests() {
+        for (auto it = requestRows.entries.rbegin(); it != requestRows.entries.rend(); ++it) {
+            const auto& row = *it;
+            auto count = [&](long long quota::TokenCounts::*member) { return row.tokens ? std::to_string((*row.tokens).*member) : "—"; };
+            std::string status = ui(row.status == "completed" ? "Completed" : row.status == "interrupted" ? "Interrupted" : row.status == "incomplete" ? "Incomplete" : row.status.c_str());
+            if (row.partial) status += " / " + std::string(ui("Partial"));
+            std::vector<std::string> values{historyTime(row.ended), row.model.empty() ? "—" : row.model, count(&quota::TokenCounts::input), count(&quota::TokenCounts::cachedInput),
+                count(&quota::TokenCounts::cacheWriteInput), count(&quota::TokenCounts::output), count(&quota::TokenCounts::reasoningOutput), count(&quota::TokenCounts::total),
+                historyPercent(row.quotaStart.fiveHour) + " → " + historyPercent(row.quotaEnd.fiveHour), historyPercent(row.quotaStart.weekly) + " → " + historyPercent(row.quotaEnd.weekly),
+                historyDelta(row.fiveChange), historyDelta(row.weeklyChange), "—", status,
+                (row.threadId.empty() ? "—" : row.threadId) + " / " + row.turnId};
+            GtkTreeIter iter; gtk_list_store_append(historyModel, &iter);
+            for (int column = 0; column < static_cast<int>(values.size()); ++column) gtk_list_store_set(historyModel, &iter, column, values[column].c_str(), -1);
+        }
+    }
     // 只读有界快照；列表与图表共用同一批数据，切换视图不访问磁盘。
     void renderHistory() {
         gtk_list_store_clear(historyModel);
-        for (auto it = historyRows.entries.rbegin(); it != historyRows.entries.rend(); ++it) {
+        // 切换数据集时重建列标题，行数与磁盘读取仍保持有界。
+        auto columns = gtk_tree_view_get_columns(GTK_TREE_VIEW(historyTable));
+        for (auto item = columns; item; item = item->next) gtk_tree_view_remove_column(GTK_TREE_VIEW(historyTable), GTK_TREE_VIEW_COLUMN(item->data));
+        g_list_free(columns);
+        std::vector<const char*> titles = showingRequests() ? std::vector<const char*>{"Time (local)", "Model", "Input tokens", "Cached input tokens", "Cache write tokens", "Output tokens", "Reasoning tokens", "Total tokens", "5h quota (start → end)", "Weekly quota (start → end)", "5h account change (pp)", "Weekly account change (pp)", "Actual cost", "Status", "Thread / turn"} :
+            std::vector<const char*>{"Time (local)", "5h remaining", "Weekly remaining", "5h change (pp)", "Weekly change (pp)", "Source / event"};
+        int column = 0; for (auto title : titles) { auto cell = gtk_cell_renderer_text_new(); auto heading = gtk_tree_view_column_new_with_attributes(ui(title), cell, "text", column++, nullptr); gtk_tree_view_column_set_resizable(heading, TRUE); gtk_tree_view_append_column(GTK_TREE_VIEW(historyTable), heading); }
+        if (showingRequests()) renderRequests();
+        else for (auto it = historyRows.entries.rbegin(); it != historyRows.entries.rend(); ++it) {
             const auto& row = *it;
             std::string event = std::string(ui(row.source == "account" ? "Account query" : row.source == "local-event" ? "Local event" : row.source.c_str())) + " / " + ui(row.kind == "baseline" ? "Baseline" : row.kind == "reset" ? "Reset" : "Change");
             GtkTreeIter iter; gtk_list_store_append(historyModel, &iter);
@@ -290,14 +318,18 @@ struct App {
         }
         std::string message = ui("Latest 30 UTC days; at most 2000 records. Refresh manually.");
         if (!engine.preferences().historyEnabled) message += "\n" + std::string(ui("History recording is disabled."));
-        if (!historyRows.error.empty()) message += "\n" + std::string(ui(historyRows.error.c_str()));
-        auto writeError = engine.state().historyError;
+        const auto readError = showingRequests() ? requestRows.error : historyRows.error;
+        if (!readError.empty()) message += "\n" + std::string(ui(readError.c_str()));
+        auto writeError = showingRequests() ? engine.state().requestError : engine.state().historyError;
         if (!writeError.empty()) message += "\n" + std::string(ui(writeError.c_str()));
-        if (historyRows.truncated) message += "\n" + std::string(ui("Showing newest records; older records were omitted."));
-        if (historyRows.entries.empty()) message += "\n" + std::string(ui("No quota changes recorded yet."));
+        if (showingRequests() ? requestRows.truncated : historyRows.truncated) message += "\n" + std::string(ui("Showing newest records; older records were omitted."));
+        if (showingRequests()) {
+            message += "\n" + std::string(ui("Account quota changes may include other work. Actual cost is unavailable.")) + "\n" + ui("Cached input is part of input; reasoning is part of output.");
+            if (requestRows.entries.empty()) message += "\n" + std::string(ui("No work requests recorded yet."));
+        } else if (historyRows.entries.empty()) message += "\n" + std::string(ui("No quota changes recorded yet."));
         gtk_label_set_text(GTK_LABEL(historyMessage), message.c_str()); gtk_widget_queue_draw(historyChart);
     }
-    void refreshHistory() { historyRows = engine.history(2000); renderHistory(); }
+    void refreshHistory() { if (showingRequests()) requestRows = engine.requests(2000); else historyRows = engine.history(2000); renderHistory(); }
     void drawHistory(cairo_t* context, double width, double height) {
         const double left = 55, top = 45, right = std::max(left + 1, width - 28), bottom = std::max(top + 1, height - 50);
         cairo_set_source_rgb(context, .12, .13, .15); cairo_paint(context);
@@ -307,6 +339,24 @@ struct App {
             auto layout = pango_cairo_create_layout(context); pango_layout_set_text(layout, text.c_str(), -1);
             cairo_set_source_rgb(context, .86, .88, .92); cairo_move_to(context, x, y); pango_cairo_show_layout(context, layout); g_object_unref(layout);
         };
+        if (showingRequests()) {
+            label(ui("Tokens per request: input (blue), output (green), cached input (orange)"), left, 12);
+            if (requestRows.entries.empty()) { label(ui("No work requests recorded yet."), left + 12, top + 30); return; }
+            double maximum = 1; for (const auto& row : requestRows.entries) if (row.tokens) maximum = std::max(maximum, static_cast<double>(std::max(row.tokens->input, row.tokens->output)));
+            for (int tick = 0; tick <= 4; ++tick) { double y = bottom - (bottom - top) * tick / 4; label(std::to_string(static_cast<long long>(maximum * tick / 4)), 4, y - 8); }
+            auto start = requestRows.entries.front().ended, end = requestRows.entries.back().ended; double span = std::max(1LL, end - start);
+            double bar = std::clamp((right - left) / (requestRows.entries.size() * 4), 1.0, 8.0);
+            // 分组柱只绘有真实 token 的请求；未知值不落到零轴。
+            for (const auto& row : requestRows.entries) if (row.tokens) {
+                const long long values[]{row.tokens->input, row.tokens->output, row.tokens->cachedInput};
+                double x = left + 12 + (right - left - 24) * (row.ended - start) / span;
+                for (int series = 0; series < 3; ++series) {
+                    cairo_set_source_rgb(context, series == 2 ? .95 : .30, series == 0 ? .65 : .80, series == 0 ? .95 : .40);
+                    double h = (bottom - top) * values[series] / maximum; cairo_rectangle(context, x + (series - 1) * bar, bottom - h, bar, h); cairo_fill(context);
+                }
+            }
+            label(historyTime(start), left, bottom + 12); if (right - left > 360) label(historyTime(end), right - 160, bottom + 12); return;
+        }
         label(ui("5h (blue) / Weekly (green) — remaining %"), left, 12);
         for (int percent : {0, 25, 50, 75, 100}) {
             double y = bottom - (bottom - top) * percent / 100.0;
@@ -340,29 +390,27 @@ struct App {
         gtk_window_set_default_size(GTK_WINDOW(historyWindow), 960, 520); gtk_window_set_resizable(GTK_WINDOW(historyWindow), TRUE);
         g_signal_connect(historyWindow, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer data) {
             auto& app = *static_cast<App*>(data); app.historyWindow = app.historyStack = app.historyMessage = app.historyChart = nullptr;
-            g_object_unref(app.historyModel); app.historyModel = nullptr; app.historyRows = {};
+            g_object_unref(app.historyModel); app.historyModel = nullptr; app.historyRows = {}; app.requestRows = {}; app.historyKind = app.historyTable = nullptr;
         }), this);
         auto box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10); gtk_container_set_border_width(GTK_CONTAINER(box), 16); gtk_container_add(GTK_CONTAINER(historyWindow), box);
         auto toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10); gtk_box_pack_start(GTK_BOX(box), toolbar, FALSE, FALSE, 0);
+        historyKind = gtk_combo_box_text_new(); gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(historyKind), ui("Quota changes")); gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(historyKind), ui("Work requests")); gtk_combo_box_set_active(GTK_COMBO_BOX(historyKind), 0); gtk_box_pack_start(GTK_BOX(toolbar), historyKind, FALSE, FALSE, 0);
         historyStack = gtk_stack_new(); auto switcher = gtk_stack_switcher_new(); gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(switcher), GTK_STACK(historyStack));
         gtk_box_pack_start(GTK_BOX(toolbar), switcher, FALSE, FALSE, 0);
         auto refresh = gtk_button_new_with_label(ui("Refresh history")); gtk_box_pack_end(GTK_BOX(toolbar), refresh, FALSE, FALSE, 0);
         g_signal_connect(refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) { static_cast<App*>(data)->refreshHistory(); }), this);
         historyMessage = gtk_label_new(""); gtk_label_set_xalign(GTK_LABEL(historyMessage), 0); gtk_label_set_line_wrap(GTK_LABEL(historyMessage), TRUE); gtk_box_pack_start(GTK_BOX(box), historyMessage, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), historyStack, TRUE, TRUE, 0);
-        historyModel = gtk_list_store_new(6, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
-        auto table = gtk_tree_view_new_with_model(GTK_TREE_MODEL(historyModel)); int column = 0;
-        for (const char* title : {"Time (local)", "5h remaining", "Weekly remaining", "5h change (pp)", "Weekly change (pp)", "Source / event"}) {
-            auto cell = gtk_cell_renderer_text_new(); auto heading = gtk_tree_view_column_new_with_attributes(ui(title), cell, "text", column++, nullptr);
-            gtk_tree_view_column_set_resizable(heading, TRUE); gtk_tree_view_append_column(GTK_TREE_VIEW(table), heading);
-        }
-        auto scroll = gtk_scrolled_window_new(nullptr, nullptr); gtk_container_add(GTK_CONTAINER(scroll), table); gtk_stack_add_titled(GTK_STACK(historyStack), scroll, "list", ui("List"));
+        GType types[15]; std::fill(std::begin(types), std::end(types), G_TYPE_STRING); historyModel = gtk_list_store_newv(15, types);
+        historyTable = gtk_tree_view_new_with_model(GTK_TREE_MODEL(historyModel));
+        auto scroll = gtk_scrolled_window_new(nullptr, nullptr); gtk_container_add(GTK_CONTAINER(scroll), historyTable); gtk_stack_add_titled(GTK_STACK(historyStack), scroll, "list", ui("List"));
         historyChart = gtk_drawing_area_new(); gtk_widget_set_size_request(historyChart, 380, 240);
         g_signal_connect(historyChart, "draw", G_CALLBACK(+[](GtkWidget* widget, cairo_t* context, gpointer data) -> gboolean {
             static_cast<App*>(data)->drawHistory(context, gtk_widget_get_allocated_width(widget), gtk_widget_get_allocated_height(widget)); return FALSE;
         }), this);
         gtk_stack_add_titled(GTK_STACK(historyStack), historyChart, "chart", ui("Chart"));
-        if (readHistory) refreshHistory(); else { historyRows = {}; renderHistory(); }
+        g_signal_connect(historyKind, "changed", G_CALLBACK(+[](GtkComboBox*, gpointer data) { static_cast<App*>(data)->refreshHistory(); }), this);
+        if (readHistory) refreshHistory(); else { historyRows = {}; requestRows = {}; renderHistory(); }
         gtk_widget_show_all(historyWindow);
     }
     void activate(::Window window) { unsigned long value = window; XChangeProperty(display, root, activeAtom, XA_WINDOW, 32, PropModeReplace, reinterpret_cast<unsigned char*>(&value), 1); XFlush(display); }
@@ -407,10 +455,21 @@ struct App {
                 auto surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 800, 400); auto context = cairo_create(surface); app.drawHistory(context, 800, 400); cairo_destroy(context); cairo_surface_destroy(surface);
                 gtk_stack_set_visible_child_name(GTK_STACK(app.historyStack), "list");
                 if (std::string(gtk_stack_get_visible_child_name(GTK_STACK(app.historyStack))) != "list") return fail("History list switch failed");
+                gtk_combo_box_set_active(GTK_COMBO_BOX(app.historyKind), 1);
+                if (gtk_tree_model_iter_n_children(GTK_TREE_MODEL(app.historyModel), nullptr) != 0) return fail("Request history must start empty");
+                quota::RequestEntry request; request.turnId = "smoke-turn"; request.ended = NowMs(); request.tokens = quota::TokenCounts{100, 20, 0, 30, 5, 130}; request.status = "completed";
+                auto unknown = request; unknown.turnId = "unknown-turn"; unknown.ended += 10; unknown.tokens.reset(); unknown.partial = true;
+                app.requestRows.entries = {request, unknown}; app.renderHistory();
+                GtkTreeIter firstRow; gchar *cost = nullptr, *input = nullptr; gtk_tree_model_get_iter_first(GTK_TREE_MODEL(app.historyModel), &firstRow);
+                gtk_tree_model_get(GTK_TREE_MODEL(app.historyModel), &firstRow, 12, &cost, 2, &input, -1);
+                bool unknownPreserved = cost && input && std::string(cost) == "—" && std::string(input) == "—"; g_free(cost); g_free(input);
+                if (!unknownPreserved || gtk_tree_model_iter_n_children(GTK_TREE_MODEL(app.historyModel), nullptr) != 2) return fail("Request list must preserve unknown tokens and actual cost");
+                surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 800, 400); context = cairo_create(surface); app.drawHistory(context, 800, 400); cairo_destroy(context); cairo_surface_destroy(surface);
                 gtk_widget_destroy(app.historyWindow);
                 app.testPassed = true; std::cout << "PASS: Linux tray/settings, X11 focus hiding, move-following, restore and host exit\n";
                 std::cout << "PASS: Linux isolated history directory persistence, empty/list/chart states and synthetic drawing\n";
                 std::cout << "PASS: Linux disabled history avoids directory probes; scrollable settings keep Save reachable\n";
+                std::cout << "PASS: Linux request selector, token list/chart and unknown actual cost\n";
                 if (app.config) gtk_widget_destroy(app.config);
                 auto usage = std::make_shared<rusage>(); getrusage(RUSAGE_SELF, usage.get());
                 auto measurement = new std::pair<App*, std::shared_ptr<rusage>>(&app, usage);

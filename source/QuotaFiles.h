@@ -7,6 +7,7 @@
 #include <functional>
 #include <unordered_map>
 #include "QuotaCore.h"
+#include "RequestUsage.h"
 
 namespace quota {
 class Handle {
@@ -26,28 +27,35 @@ inline long long FileTimeMs(FILETIME f) {
 inline long long NowMs() { FILETIME f{}; GetSystemTimeAsFileTime(&f); return FileTimeMs(f); }
 
 class FileFollower {
-    struct Cursor { long long offset = 0; EventLines lines; unsigned long long touched = 0, identity = 0; DWORD volume = 0; };
+    struct Cursor {
+        long long offset = 0; MetadataLines lines; RequestTracker requests;
+        unsigned long long touched = 0, identity = 0; DWORD volume = 0;
+        explicit Cursor(long long since) : requests(since) {}
+    };
     std::unordered_map<std::wstring, Cursor> files;
     unsigned long long serial = 0;
+    // 整个监听器共用启动时间；新发现文件不能按首次读盘时刻漏掉刚完成的请求。
+    long long requestSince_ = NowMs();
 public:
     unsigned long long bytesRead = 0;
     unsigned long long reads = 0;
     void clear() { files.clear(); }
     void forget(const std::wstring& name) { files.erase(name); }
-    bool read(const std::wstring& name, const std::function<void(const Snapshot&)>& accept) {
+    bool read(const std::wstring& name, const std::function<void(const Snapshot&)>& accept,
+              const std::function<void(const RequestEntry&)>& request = {}) {
         Handle file(CreateFileW(name.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr));
         if (!file.valid()) return false;
         LARGE_INTEGER end{}; if (!GetFileSizeEx(file, &end)) return false;
-        auto& c = files[name]; c.touched = ++serial;
+        auto& c = files.try_emplace(name, requestSince_).first->second; c.touched = ++serial;
         BY_HANDLE_FILE_INFORMATION info{};
         if (GetFileInformationByHandle(file, &info)) {
             unsigned long long identity = (static_cast<unsigned long long>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
-            if (c.identity != identity || c.volume != info.dwVolumeSerialNumber) { c.offset = 0; c.lines.reset(); }
+            if (c.identity != identity || c.volume != info.dwVolumeSerialNumber) { c.offset = 0; c.lines.reset(); c.requests.reset(); }
             c.identity = identity; c.volume = info.dwVolumeSerialNumber;
         }
         const long long maxBytes = 256 * 1024;
-        if (end.QuadPart < c.offset) { c.offset = 0; c.lines.reset(); }
-        if (end.QuadPart - c.offset > maxBytes) { c.offset = end.QuadPart - maxBytes; c.lines.reset(true); }
+        if (end.QuadPart < c.offset) { c.offset = 0; c.lines.reset(); c.requests.reset(); }
+        if (end.QuadPart - c.offset > maxBytes) { c.offset = end.QuadPart - maxBytes; c.lines.reset(true); c.requests.reset(); }
         LARGE_INTEGER start{}; start.QuadPart = c.offset;
         if (!SetFilePointerEx(file, start, nullptr, FILE_BEGIN)) return false;
         char bytes[16384]; long long remaining = end.QuadPart - c.offset;
@@ -55,7 +63,10 @@ public:
             DWORD count = 0; DWORD wanted = static_cast<DWORD>(std::min<long long>(remaining, sizeof(bytes)));
             if (!ReadFile(file, bytes, wanted, &count, nullptr) || !count) break;
             c.offset += count; remaining -= count; bytesRead += count; ++reads;
-            c.lines.feed(bytes, count, accept);
+            c.lines.feed(bytes, count, [&](const std::string& line) {
+                Snapshot snapshot; if (ParseEvent(line, snapshot) && accept) accept(snapshot);
+                if (request) c.requests.consume(line, request);
+            });
         }
         if (files.size() > 64) {
             auto oldest = files.begin(); for (auto it = files.begin(); it != files.end(); ++it) if (it->second.touched < oldest->second.touched) oldest = it;

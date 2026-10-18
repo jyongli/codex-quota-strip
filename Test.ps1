@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 & (Join-Path $PSScriptRoot 'source\BuildSdkTests.ps1')
-$targets = @('QuotaTests','HistoryTests','SettingsTests','TrayIconTests','ProviderEnvironmentTests','ProxyConfigTests')
+$targets = @('QuotaTests','HistoryTests','RequestTests','SettingsTests','TrayIconTests','ProviderEnvironmentTests','ProxyConfigTests')
 if ($Integration) { $targets += @('LifecycleTests','ConfigUiTests','WeeklyDisplayTests','HistoryUiTests') }
 foreach ($target in $targets) {
     & (Join-Path $PSScriptRoot 'Build.ps1') -Target $target -OutputDirectory $OutputDirectory

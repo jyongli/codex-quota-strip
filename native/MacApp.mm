@@ -26,7 +26,9 @@ static NSString* HistoryDelta(const std::optional<double>& value) { return value
 @interface QuotaHistoryChart : NSView {
 @public
     std::vector<quota::HistoryEntry> rows;
+    std::vector<quota::RequestEntry> requests;
     bool chinese;
+    bool requestMode;
 }
 @end
 @implementation QuotaHistoryChart
@@ -35,6 +37,24 @@ static NSString* HistoryDelta(const std::optional<double>& value) { return value
     double left = 55, bottom = 48, right = std::max(left + 1, self.bounds.size.width - 28.0), top = std::max(bottom + 1, self.bounds.size.height - 48.0);
     NSDictionary* attributes = @{NSFontAttributeName: [NSFont systemFontOfSize:11], NSForegroundColorAttributeName: NSColor.labelColor};
     auto label = [&](NSString* text, double x, double y) { [text drawAtPoint:NSMakePoint(x, y) withAttributes:attributes]; };
+    if (requestMode) {
+        label(Text(Translate("Tokens per request: input (blue), output (green), cached input (orange)", chinese)), left, top + 18);
+        if (requests.empty()) { label(Text(Translate("No work requests recorded yet.", chinese)), left + 12, top - 35); return; }
+        double maximum = 1; for (const auto& row : requests) if (row.tokens) maximum = std::max(maximum, static_cast<double>(std::max(row.tokens->input, row.tokens->output)));
+        for (int tick = 0; tick <= 4; ++tick) label(Text(std::to_string(static_cast<long long>(maximum * tick / 4))), 4, bottom + (top - bottom) * tick / 4 - 6);
+        auto start = requests.front().ended, end = requests.back().ended; double span = std::max(1LL, end - start);
+        double bar = std::clamp((right - left) / (requests.size() * 4), 1.0, 8.0);
+        // 不把未知 token 画成零；缓存读取是输入的子集，单独上色以便观察。
+        for (const auto& row : requests) if (row.tokens) {
+            const long long values[]{row.tokens->input, row.tokens->output, row.tokens->cachedInput};
+            double x = left + 12 + (right - left - 24) * (row.ended - start) / span;
+            for (int series = 0; series < 3; ++series) {
+                [(series == 0 ? NSColor.systemBlueColor : series == 1 ? NSColor.systemGreenColor : NSColor.systemOrangeColor) setFill];
+                double h = (top - bottom) * values[series] / maximum; NSRectFill(NSMakeRect(x + (series - 1) * bar, bottom, bar, h));
+            }
+        }
+        label(HistoryTime(start), left, 20); if (right - left > 360) label(HistoryTime(end), right - 160, 20); return;
+    }
     label(Text(Translate("5h (blue) / Weekly (green) — remaining %", chinese)), left, top + 18);
     for (int percent : {0, 25, 50, 75, 100}) {
         double y = bottom + (top - bottom) * percent / 100.0;
@@ -90,6 +110,8 @@ static NSString* HistoryDelta(const std::optional<double>& value) { return value
     NSTableView* historyTable;
     QuotaHistoryChart* historyChart;
     quota::HistoryReadResult historyRows;
+    NSPopUpButton* historyKind;
+    quota::RequestReadResult requestRows;
     AXObserverRef observer;
     AXUIElementRef application, focused;
     pid_t observedPid;
@@ -112,6 +134,7 @@ static NSString* HistoryDelta(const std::optional<double>& value) { return value
 - (void)showHistory:(BOOL)readHistory;
 - (void)refreshHistory:(id)sender;
 - (void)renderHistory;
+- (BOOL)showingRequests;
 - (void)switchHistory:(id)sender;
 - (void)browseHistory:(id)sender;
 @end
@@ -132,7 +155,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     (void)notification;
     configRoot = options.smoke ? std::filesystem::temp_directory_path() / ("quota-mac-smoke-" + std::to_string(getpid())) : ConfigDirectory();
     // 冒烟测试在 Engine 启动前覆盖日志路径，不触碰真实账户的默认目录。
-    if (options.smoke) options.preferences.historyDirectory = (configRoot / "history").string();
+    if (options.smoke) { options.preferences.home = (configRoot / "home").string(); options.preferences.historyDirectory = (configRoot / "history").string(); }
     // 用户级实例锁独立于所选账号目录，设置切换后仍阻止重复启动。
     singleton = std::make_unique<InstanceLock>(configRoot / "instance.lock");
     if (!singleton->acquired()) { [NSApp terminate:nil]; return; }
@@ -191,11 +214,19 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
         auto third = second; third.recorded += 500; third.kind = "reset"; third.snapshot.fiveHour.present = false; third.snapshot.weekly = {true, 15, 0}; third.fiveChange.reset();
         historyRows.entries = {first, second, third}; [self renderHistory]; passed = passed && historyTable.numberOfRows == 3;
         historyMode.selectedSegment = 1; [self switchHistory:nil]; [historyChart display]; passed = passed && !historyChart.hidden && historyScroll.hidden;
-        historyMode.selectedSegment = 0; [self switchHistory:nil]; passed = passed && historyChart.hidden && !historyScroll.hidden; [historyWindow close];
+        historyMode.selectedSegment = 0; [self switchHistory:nil]; passed = passed && historyChart.hidden && !historyScroll.hidden;
+        [historyKind selectItemAtIndex:1]; [self refreshHistory:nil]; passed = passed && historyTable.numberOfRows == 0;
+        quota::RequestEntry request; request.turnId = "smoke-turn"; request.ended = NowMs(); request.tokens = quota::TokenCounts{100, 20, 0, 30, 5, 130}; request.status = "completed";
+        auto unknown = request; unknown.turnId = "unknown-turn"; unknown.ended += 10; unknown.tokens.reset(); unknown.partial = true;
+        requestRows.entries = {request, unknown}; [self renderHistory];
+        passed = passed && historyTable.numberOfRows == 2 && [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[12] row:0] isEqualToString:@"—"] &&
+            [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[2] row:0] isEqualToString:@"—"];
+        historyMode.selectedSegment = 1; [self switchHistory:nil]; [historyChart display]; passed = passed && !historyChart.hidden; [historyWindow close];
         [strip orderOut:nil]; self.smokePassed = passed && !strip.isVisible;
         std::cout << (self.smokePassed ? "PASS: macOS menu bar, native settings persistence, passive overlay and hide lifecycle\n" : "FAIL: macOS native UI smoke test\n");
         if (self.smokePassed) std::cout << "PASS: macOS isolated history directory persistence, empty/list/chart states and synthetic drawing\n";
         if (self.smokePassed) std::cout << "PASS: macOS disabled history avoids directory probes; scrollable settings keep Save reachable\n";
+        if (self.smokePassed) std::cout << "PASS: macOS request selector, token list/chart and unknown actual cost\n";
         [config close];
         rusage before{}; getrusage(RUSAGE_SELF, &before);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -259,6 +290,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (status) {
         std::string detail = text + "\n" + Translate(current.refreshing ? "Refreshing…" : !current.error.empty() ? current.error.c_str() : !prefs.online ? "Online queries disabled" : "Account quota",prefs.chinese);
         if (!current.historyError.empty()) detail += "\n" + std::string(Translate(current.historyError.c_str(), prefs.chinese));
+        if (!current.requestError.empty()) detail += "\n" + std::string(Translate(current.requestError.c_str(), prefs.chinese));
         if (!options.smoke && prefs.overlay && !AXIsProcessTrusted()) detail += Translate("\nAllow Accessibility access to follow Codex windows.",prefs.chinese);
         status.stringValue = Text(detail);
     }
@@ -296,7 +328,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     binary = [self field:@"Codex executable (blank = auto)" value:Text(prefs.binary) y:358];
     hostName = [self field:@"Host application contains" value:Text(prefs.host) y:320];
     [self label:@"Language" y:282];language=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(260,282,276,26)pullsDown:NO];[language addItemsWithTitles:@[@"中文",@"English"]];[language selectItemAtIndex:prefs.chinese?0:1];[configForm addSubview:language];
-    historyEnabled = [self check:@"Record quota changes" enabled:prefs.historyEnabled y:240];
+    historyEnabled = [self check:@"Record quota changes and request tokens" enabled:prefs.historyEnabled y:240];
     historyDirectory = [self field:@"History directory" value:Text(prefs.historyDirectory) y:202]; historyDirectory.frame = NSMakeRect(260, 202, 190, 24);
     auto browse = [NSButton buttonWithTitle:[self ui:@"Browse…"] target:self action:@selector(browseHistory:)]; browse.frame = NSMakeRect(454, 199, 82, 30); [configForm addSubview:browse];
     auto history = [NSButton buttonWithTitle:[self ui:@"Quota history…"] target:self action:@selector(openHistory:)]; history.frame = NSMakeRect(24, 156, 230, 32); [configForm addSubview:history];
@@ -308,7 +340,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
 }
 - (void)windowWillClose:(NSNotification*)notification {
     if (notification.object == config) { config = nil; status = nil; seconds = nil; stale = nil; home = nil; binary = nil; hostName = nil; online = nil; only = nil; show = nil; position = nil; language=nil; historyDirectory=nil; historyEnabled=nil; configForm=nil; configActions=nil; configScroll=nil; configApply=nil; }
-    if (notification.object == historyWindow) { historyWindow=nil; historyMessage=nil; historyMode=nil; historyScroll=nil; historyTable=nil; historyChart=nil; historyRows={}; }
+    if (notification.object == historyWindow) { historyWindow=nil; historyMessage=nil; historyMode=nil; historyScroll=nil; historyTable=nil; historyChart=nil; historyKind=nil; historyRows={}; requestRows={}; }
 }
 - (void)apply:(id)sender {
     (void)sender; auto prefs = engine->preferences();
@@ -323,7 +355,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (prefs.historyEnabled && !quota::HistoryStore::ValidateDirectory(std::filesystem::path(prefs.historyDirectory), directoryError)) { status.stringValue = [self ui:@"Cannot use history directory; choose an absolute writable path."]; return; }
     if (!Save(configRoot / "settings.ini", prefs)) { status.stringValue = [self ui:@"Cannot save: check absolute home path, values and permissions."]; return; }
     engine->configure(prefs); [self updateHost]; [self update];
-    if (historyWindow) { if (prefs.historyEnabled) [self refreshHistory:nil]; else { historyRows = {}; [self renderHistory]; } }
+    if (historyWindow) { if (prefs.historyEnabled) [self refreshHistory:nil]; else { historyRows = {}; requestRows = {}; [self renderHistory]; } }
     if(changedLanguage){[self translateMenu];[config close];[self openSettings:nil];if(historyWindow){[historyWindow close];[self showHistory:prefs.historyEnabled];}}
 }
 - (void)browseHistory:(id)sender {
@@ -334,9 +366,27 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
         if (response == NSModalResponseOK && panel.URL.isFileURL && historyDirectory) historyDirectory.stringValue = panel.URL.path;
     }];
 }
-- (NSInteger)numberOfRowsInTableView:(NSTableView*)tableView { (void)tableView; return static_cast<NSInteger>(historyRows.entries.size()); }
+- (BOOL)showingRequests { return historyKind && historyKind.indexOfSelectedItem == 1; }
+- (NSInteger)numberOfRowsInTableView:(NSTableView*)tableView { (void)tableView; return static_cast<NSInteger>([self showingRequests] ? requestRows.entries.size() : historyRows.entries.size()); }
 - (id)tableView:(NSTableView*)tableView objectValueForTableColumn:(NSTableColumn*)column row:(NSInteger)index {
     (void)tableView;
+    if ([self showingRequests]) {
+        if (index < 0 || static_cast<size_t>(index) >= requestRows.entries.size()) return @"";
+        const auto& row = requestRows.entries[requestRows.entries.size() - 1 - static_cast<size_t>(index)];
+        auto count = [&](long long quota::TokenCounts::*member) -> NSString* { return row.tokens ? Text(std::to_string((*row.tokens).*member)) : @"—"; };
+        NSString* status = [self ui:row.status == "completed" ? @"Completed" : row.status == "interrupted" ? @"Interrupted" : row.status == "incomplete" ? @"Incomplete" : Text(row.status)];
+        if (row.partial) status = [status stringByAppendingFormat:@" / %@", [self ui:@"Partial"]];
+        switch (column.identifier.integerValue) {
+            case 0: return HistoryTime(row.ended); case 1: return row.model.empty() ? @"—" : Text(row.model);
+            case 2: return count(&quota::TokenCounts::input); case 3: return count(&quota::TokenCounts::cachedInput); case 4: return count(&quota::TokenCounts::cacheWriteInput);
+            case 5: return count(&quota::TokenCounts::output); case 6: return count(&quota::TokenCounts::reasoningOutput); case 7: return count(&quota::TokenCounts::total);
+            case 8: return [NSString stringWithFormat:@"%@ → %@", HistoryPercent(row.quotaStart.fiveHour), HistoryPercent(row.quotaEnd.fiveHour)];
+            case 9: return [NSString stringWithFormat:@"%@ → %@", HistoryPercent(row.quotaStart.weekly), HistoryPercent(row.quotaEnd.weekly)];
+            case 10: return HistoryDelta(row.fiveChange); case 11: return HistoryDelta(row.weeklyChange); case 12: return @"—";
+            case 13: return status;
+            default: return [NSString stringWithFormat:@"%@ / %@", row.threadId.empty() ? @"—" : Text(row.threadId), Text(row.turnId)];
+        }
+    }
     if (index < 0 || static_cast<size_t>(index) >= historyRows.entries.size()) return @"";
     const auto& row = historyRows.entries[historyRows.entries.size() - 1 - static_cast<size_t>(index)];
     switch (column.identifier.integerValue) {
@@ -351,17 +401,29 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
 - (void)renderHistory {
     if (!historyWindow) return;
     auto prefs = engine->preferences(); historyChart->rows = historyRows.entries; historyChart->chinese = prefs.chinese;
+    historyChart->requests = requestRows.entries; historyChart->requestMode = [self showingRequests];
+    for (NSTableColumn* column in [historyTable.tableColumns copy]) [historyTable removeTableColumn:column];
+    NSArray* headings = [self showingRequests] ? @[@"Time (local)", @"Model", @"Input tokens", @"Cached input tokens", @"Cache write tokens", @"Output tokens", @"Reasoning tokens", @"Total tokens", @"5h quota (start → end)", @"Weekly quota (start → end)", @"5h account change (pp)", @"Weekly account change (pp)", @"Actual cost", @"Status", @"Thread / turn"] :
+        @[@"Time (local)", @"5h remaining", @"Weekly remaining", @"5h change (pp)", @"Weekly change (pp)", @"Source / event"];
+    for (NSUInteger index = 0; index < headings.count; ++index) {
+        auto column = [[NSTableColumn alloc] initWithIdentifier:[NSString stringWithFormat:@"%lu", static_cast<unsigned long>(index)]];
+        column.title = [self ui:headings[index]]; column.width = index == 0 ? 175 : 150; column.minWidth = 90; column.editable = NO; [historyTable addTableColumn:column];
+    }
     [historyTable reloadData]; historyChart.needsDisplay = YES;
     NSMutableString* message = [[self ui:@"Latest 30 UTC days; at most 2000 records. Refresh manually."] mutableCopy];
     if (!prefs.historyEnabled) [message appendFormat:@"\n%@", [self ui:@"History recording is disabled."]];
-    if (!historyRows.error.empty()) [message appendFormat:@"\n%@", [self ui:Text(historyRows.error)]];
-    auto writeError = engine->state().historyError;
+    auto readError = [self showingRequests] ? requestRows.error : historyRows.error;
+    if (!readError.empty()) [message appendFormat:@"\n%@", [self ui:Text(readError)]];
+    auto writeError = [self showingRequests] ? engine->state().requestError : engine->state().historyError;
     if (!writeError.empty()) [message appendFormat:@"\n%@", [self ui:Text(writeError)]];
-    if (historyRows.truncated) [message appendFormat:@"\n%@", [self ui:@"Showing newest records; older records were omitted."]];
-    if (historyRows.entries.empty()) [message appendFormat:@"\n%@", [self ui:@"No quota changes recorded yet."]];
+    if ([self showingRequests] ? requestRows.truncated : historyRows.truncated) [message appendFormat:@"\n%@", [self ui:@"Showing newest records; older records were omitted."]];
+    if ([self showingRequests]) {
+        [message appendFormat:@"\n%@\n%@", [self ui:@"Account quota changes may include other work. Actual cost is unavailable."], [self ui:@"Cached input is part of input; reasoning is part of output."]];
+        if (requestRows.entries.empty()) [message appendFormat:@"\n%@", [self ui:@"No work requests recorded yet."]];
+    } else if (historyRows.entries.empty()) [message appendFormat:@"\n%@", [self ui:@"No quota changes recorded yet."]];
     historyMessage.stringValue = message;
 }
-- (void)refreshHistory:(id)sender { (void)sender; if (historyWindow) { historyRows = engine->history(2000); [self renderHistory]; } }
+- (void)refreshHistory:(id)sender { (void)sender; if (historyWindow) { if ([self showingRequests]) requestRows = engine->requests(2000); else historyRows = engine->history(2000); [self renderHistory]; } }
 - (void)switchHistory:(id)sender {
     (void)sender; BOOL chart = historyMode.selectedSegment == 1; historyScroll.hidden = chart; historyChart.hidden = !chart;
     if (chart) historyChart.needsDisplay = YES;
@@ -375,15 +437,11 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     historyWindow.title = [self ui:@"Codex Quota — History"]; historyWindow.minSize = NSMakeSize(640, 400); historyWindow.releasedWhenClosed = NO; historyWindow.delegate = self;
     historyMode = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(16, 496, 190, 28)]; historyMode.segmentCount = 2;
     [historyMode setLabel:[self ui:@"List"] forSegment:0]; [historyMode setLabel:[self ui:@"Chart"] forSegment:1]; historyMode.selectedSegment = 0; historyMode.target = self; historyMode.action = @selector(switchHistory:); historyMode.autoresizingMask = NSViewMaxXMargin | NSViewMinYMargin; [historyWindow.contentView addSubview:historyMode];
+    historyKind = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(220, 496, 230, 28) pullsDown:NO]; [historyKind addItemsWithTitles:@[[self ui:@"Quota changes"], [self ui:@"Work requests"]]]; historyKind.target = self; historyKind.action = @selector(refreshHistory:); historyKind.autoresizingMask = NSViewMaxXMargin | NSViewMinYMargin; [historyWindow.contentView addSubview:historyKind];
     auto refresh = [NSButton buttonWithTitle:[self ui:@"Refresh history"] target:self action:@selector(refreshHistory:)]; refresh.frame = NSMakeRect(764, 496, 180, 28); refresh.autoresizingMask = NSViewMinXMargin | NSViewMinYMargin; [historyWindow.contentView addSubview:refresh];
     historyMessage = [NSTextField wrappingLabelWithString:@""]; historyMessage.frame = NSMakeRect(16, 392, 928, 94); historyMessage.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin; [historyWindow.contentView addSubview:historyMessage];
     historyScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(16, 16, 928, 366)]; historyScroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; historyScroll.hasVerticalScroller = YES; historyScroll.hasHorizontalScroller = YES;
     historyTable = [[NSTableView alloc] initWithFrame:historyScroll.bounds]; historyTable.dataSource = self;
-    NSArray* headings = @[@"Time (local)", @"5h remaining", @"Weekly remaining", @"5h change (pp)", @"Weekly change (pp)", @"Source / event"];
-    for (NSUInteger index = 0; index < headings.count; ++index) {
-        auto column = [[NSTableColumn alloc] initWithIdentifier:[NSString stringWithFormat:@"%lu", static_cast<unsigned long>(index)]];
-        column.title = [self ui:headings[index]]; column.width = index == 0 ? 175 : index == 5 ? 205 : 130; column.minWidth = 90; column.editable = NO; [historyTable addTableColumn:column];
-    }
     historyScroll.documentView = historyTable; [historyWindow.contentView addSubview:historyScroll];
     historyChart = [[QuotaHistoryChart alloc] initWithFrame:historyScroll.frame]; historyChart.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; historyChart.hidden = YES; [historyWindow.contentView addSubview:historyChart];
     if (readHistory) [self refreshHistory:nil]; else { historyRows = {}; [self renderHistory]; }
