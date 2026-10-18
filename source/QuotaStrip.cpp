@@ -1101,7 +1101,8 @@ int WINAPI wWinMain(HINSTANCE app, HINSTANCE, PWSTR, int) {
     if (!headless) {
         taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated"); AddTray();
         PositionStrip();
-        foregroundHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, OnHostEvent, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+        // 配置、历史和目录对话框也会获得前台；必须接收本进程事件，及时隐藏配额条避免遮挡输入。
+        foregroundHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, OnHostEvent, 0, 0, WINEVENT_OUTOFCONTEXT);
         PositionStrip();
         // 15 秒只检查窗口和监听器状态，不抓屏、不查询网络、不重新读取全量日志。
         SetTimer(controller,RecoveryTimer,15000,nullptr);
