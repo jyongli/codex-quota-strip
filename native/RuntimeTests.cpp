@@ -10,11 +10,11 @@ std::string iso(long long milliseconds) {
     char value[64]; std::strftime(value, sizeof(value), "%Y-%m-%dT%H:%M:%S", &utc);
     char fraction[16]; std::snprintf(fraction, sizeof(fraction), ".%03lldZ", milliseconds % 1000); return std::string(value) + fraction;
 }
-std::string requestFixture(const std::string& turn, long long now) {
+std::string requestFixture(const std::string& turn, long long now, int responseCount = 1) {
     auto line = [&](const char* type, const std::string& payload) { return "{\"timestamp\":\"" + iso(now) + "\",\"type\":\"" + type + "\",\"payload\":" + payload + "}\n"; };
     return line("session_meta", "{\"id\":\"runtime-thread\"}") + line("turn_context", "{\"turn_id\":\"" + turn + "\",\"model\":\"synthetic-model\"}") +
         line("event_msg", "{\"type\":\"task_started\",\"turn_id\":\"" + turn + "\"}") +
-        line("event_msg", "{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":30,\"reasoning_output_tokens\":5,\"total_tokens\":130},\"last_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":30,\"reasoning_output_tokens\":5,\"total_tokens\":130}}}") +
+        line("event_msg", "{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":" + std::to_string(100 * responseCount) + ",\"cached_input_tokens\":" + std::to_string(20 * responseCount) + ",\"output_tokens\":" + std::to_string(30 * responseCount) + ",\"reasoning_output_tokens\":" + std::to_string(5 * responseCount) + ",\"total_tokens\":" + std::to_string(130 * responseCount) + "},\"last_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":30,\"reasoning_output_tokens\":5,\"total_tokens\":130}}}") +
         line("event_msg", "{\"type\":\"task_complete\",\"turn_id\":\"" + turn + "\"}");
 }
 int main(int argc, char** argv) {
@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
         while (!hasTurn("cross-account-turn") && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         require(!hasTurn("cross-account-turn"), "Auth boundary must reject a replayed old-account request instead of combining cross-account tokens or quota");
         // 已追踪请求的完成行可含超出普通尾读上限的回复；数字计数必须保留，正文不落盘。
-        auto largeStart = nativequota::NowMs() + 10; auto largePrefix = requestFixture("large-final-reply", largeStart);
+        auto largeStart = nativequota::NowMs() + 10; auto largePrefix = requestFixture("large-final-reply", largeStart, 2);
         largePrefix.erase(largePrefix.rfind("{\"timestamp\":"));
         { std::ofstream out(session, std::ios::app); out << largePrefix; }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
