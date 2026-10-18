@@ -1,6 +1,7 @@
 #pragma once
 #include "../source/QuotaCore.h"
 #include "../source/QuotaHistory.h"
+#include "../source/RequestUsage.h"
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
@@ -23,6 +24,7 @@ struct State {
     bool refreshing = false;
     std::string error;
     std::string historyError;
+    std::string requestError;
 };
 struct Rect { double x = 0, y = 0, width = 0, height = 0; };
 struct QueryResult {
@@ -78,6 +80,7 @@ public:
     Preferences preferences();
     State state();
     quota::HistoryReadResult history(size_t maxRows = 2000);
+    quota::RequestReadResult requests(size_t maxRows = 2000);
     void configure(Preferences settings);
     void hostAvailable(bool value);
     void start(std::function<void()> changed);

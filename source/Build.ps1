@@ -1,4 +1,4 @@
-param([switch]$Tests, [switch]$UiProbe, [switch]$VisibilityTests, [switch]$TrayIconTests, [switch]$LayerTests, [ValidateSet('HistoryTests','HistoryUiTests','SettingsTests','ConfigUiTests','LifecycleTests','WeeklyDisplayTests','ProviderProbe','ProviderEnvironmentTests','ProxyConfigTests')][string]$Extra, [string]$OutputDirectory = $PSScriptRoot)
+param([switch]$Tests, [switch]$UiProbe, [switch]$VisibilityTests, [switch]$TrayIconTests, [switch]$LayerTests, [ValidateSet('HistoryTests','RequestTests','HistoryUiTests','SettingsTests','ConfigUiTests','LifecycleTests','WeeklyDisplayTests','ProviderProbe','ProviderEnvironmentTests','ProxyConfigTests')][string]$Extra, [string]$OutputDirectory = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) { throw 'Visual Studio Installer / vswhere was not found. Install Visual Studio 2022 C++ Build Tools and a Windows SDK.' }

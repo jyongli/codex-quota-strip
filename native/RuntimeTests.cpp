@@ -4,6 +4,19 @@
 #include <sys/stat.h>
 #include <unistd.h>
 void require(bool value, const char* reason) { if (!value) throw std::runtime_error(reason); }
+// 使用真实 JSONL 追加路径验证监听，时间取当前值以穿过启动截止点，不读取真实账号。
+std::string iso(long long milliseconds) {
+    std::time_t seconds = milliseconds / 1000; std::tm utc{}; gmtime_r(&seconds, &utc);
+    char value[64]; std::strftime(value, sizeof(value), "%Y-%m-%dT%H:%M:%S", &utc);
+    char fraction[16]; std::snprintf(fraction, sizeof(fraction), ".%03lldZ", milliseconds % 1000); return std::string(value) + fraction;
+}
+std::string requestFixture(const std::string& turn, long long now) {
+    auto line = [&](const char* type, const std::string& payload) { return "{\"timestamp\":\"" + iso(now) + "\",\"type\":\"" + type + "\",\"payload\":" + payload + "}\n"; };
+    return line("session_meta", "{\"id\":\"runtime-thread\"}") + line("turn_context", "{\"turn_id\":\"" + turn + "\",\"model\":\"synthetic-model\"}") +
+        line("event_msg", "{\"type\":\"task_started\",\"turn_id\":\"" + turn + "\"}") +
+        line("event_msg", "{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":30,\"reasoning_output_tokens\":5,\"total_tokens\":130},\"last_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":20,\"output_tokens\":30,\"reasoning_output_tokens\":5,\"total_tokens\":130}}}") +
+        line("event_msg", "{\"type\":\"task_complete\",\"turn_id\":\"" + turn + "\"}");
+}
 int main(int argc, char** argv) {
     if (argc != 2) return 2;
     auto root = std::filesystem::temp_directory_path() / ("quota-native-test-" + std::to_string(getpid()));
@@ -78,10 +91,25 @@ int main(int argc, char** argv) {
         require(engine.state().snapshot.observed == 0, "Moving auth.json away must clear cached quota even with online queries off");
         settings.home = (root / "second account").string(); settings.online = false; engine.configure(settings);
         require(engine.state().snapshot.observed == 0, "Changing account home must clear previous snapshot"); engine.stop();
-        for (const auto& entry : std::filesystem::directory_iterator(settings.historyDirectory)) std::filesystem::remove(entry.path());
-        std::filesystem::remove(settings.historyDirectory);
-        std::filesystem::remove(root / "home with spaces/auth.saved"); std::filesystem::remove(root / "home with spaces");
-        std::filesystem::remove(file); std::filesystem::remove(root / "instance.lock"); std::filesystem::remove(root);
+        // 在线查询关闭时，新建多级会话目录和追加完成事件仍应触发真实 token 记录。
+        settings.home = (root / "request-home").string(); settings.historyDirectory = (root / "request-history").string(); settings.online = false;
+        std::filesystem::create_directories(settings.home);
+        nativequota::Engine listener(settings); listener.start([] {});
+        auto sessions = std::filesystem::path(settings.home) / "sessions/2099/01/01"; std::filesystem::create_directories(sessions);
+        auto session = sessions / "rollout-runtime.jsonl";
+        { std::ofstream out(session); out << requestFixture("runtime-turn", nativequota::NowMs() + 10); }
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        quota::RequestReadResult requests;
+        do { requests = listener.requests(); if (!requests.entries.empty()) break; std::this_thread::sleep_for(std::chrono::milliseconds(10)); } while (std::chrono::steady_clock::now() < deadline);
+        require(requests.entries.size() == 1 && requests.entries[0].turnId == "runtime-turn" && requests.entries[0].tokens && requests.entries[0].tokens->input == 100 && requests.entries[0].tokens->total == 130,
+            "Native event-driven session follower must record real request tokens with online queries disabled");
+        require(listener.state().snapshot.observed == 0, "Session logging must not launch an account query");
+        settings.historyEnabled = false; listener.configure(settings);
+        { std::ofstream out(session, std::ios::app); out << requestFixture("disabled-turn", nativequota::NowMs() + 10); }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        require(listener.requests().entries.size() == 1, "Disabled logging must stop following session appends"); listener.stop();
+        // root 完全由测试创建，包含新监听器的会话与日志目录，结束后统一清理。
+        std::filesystem::remove_all(root);
         std::cout << "PASS: preferences, input bounds, overlay geometry, expiry, single instance and blocking refresh lifecycle\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << '\n'; return 1; }

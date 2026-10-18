@@ -343,6 +343,7 @@ Engine::~Engine() { stop(); }
 Preferences Engine::preferences() { std::lock_guard<std::mutex> lock(mutex_); return preferences_; }
 State Engine::state() { std::lock_guard<std::mutex> lock(mutex_); return state_; }
 quota::HistoryReadResult Engine::history(size_t maxRows) { return history_.read(maxRows); }
+quota::RequestReadResult Engine::requests(size_t maxRows) { (void)maxRows; return {}; }
 void Engine::configure(Preferences value) {
     if (!Valid(value)) return;
     bool homeChanged; std::string currentHome;

@@ -66,7 +66,7 @@ inline const std::string& Header() {
     return value;
 }
 // 只锁定本条日志文件，立即失败而不等待其他进程；不启动常驻服务或额外轮询。
-inline bool Append(const std::filesystem::path& path, const std::string& row) {
+inline bool Append(const std::filesystem::path& path, const std::string& row, const std::string& headerText = Header()) {
 #ifdef _WIN32
     HANDLE file = CreateFileW(path.c_str(), GENERIC_READ | FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
@@ -75,14 +75,14 @@ inline bool Append(const std::filesystem::path& path, const std::string& row) {
     LARGE_INTEGER size{}; bool ok = GetFileSizeEx(file, &size) != FALSE;
     bool partial = false;
     if (ok && size.QuadPart > 0) {
-        std::string header(Header().size(), '\0'); DWORD read = 0;
-        ok = ReadFile(file, header.data(), static_cast<DWORD>(header.size()), &read, nullptr) && read == header.size() && header == Header();
+        std::string header(headerText.size(), '\0'); DWORD read = 0;
+        ok = ReadFile(file, header.data(), static_cast<DWORD>(header.size()), &read, nullptr) && read == header.size() && header == headerText;
         LARGE_INTEGER tail{}; tail.QuadPart = -1; char byte = '\0';
         if (ok) ok = SetFilePointerEx(file, tail, nullptr, FILE_END) && ReadFile(file, &byte, 1, &read, nullptr) && read == 1;
         partial = byte != '\n';
     }
     // 保留损坏尾行但补换行，让下一条完整记录可以独立解析。
-    const auto bytes = size.QuadPart == 0 ? Header() + row : (partial ? "\n" + row : row);
+    const auto bytes = size.QuadPart == 0 ? headerText + row : (partial ? "\n" + row : row);
     DWORD written = 0;
     if (ok) ok = WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) && written == bytes.size();
     UnlockFileEx(file, 0, MAXDWORD, MAXDWORD, &lock); CloseHandle(file); return ok;
@@ -93,12 +93,12 @@ inline bool Append(const std::filesystem::path& path, const std::string& row) {
     bool ok = fstat(file, &status) == 0 && S_ISREG(status.st_mode) && flock(file, LOCK_EX | LOCK_NB) == 0;
     bool partial = false;
     if (ok && status.st_size > 0) {
-        std::string header(Header().size(), '\0'); auto count = pread(file, header.data(), header.size(), 0);
-        ok = count == static_cast<ssize_t>(header.size()) && header == Header();
+        std::string header(headerText.size(), '\0'); auto count = pread(file, header.data(), header.size(), 0);
+        ok = count == static_cast<ssize_t>(header.size()) && header == headerText;
         char byte = '\0'; if (ok) ok = pread(file, &byte, 1, status.st_size - 1) == 1;
         partial = byte != '\n';
     }
-    const auto bytes = status.st_size == 0 ? Header() + row : (partial ? "\n" + row : row);
+    const auto bytes = status.st_size == 0 ? headerText + row : (partial ? "\n" + row : row);
     if (ok) { ssize_t count; do { count = write(file, bytes.data(), bytes.size()); } while (count < 0 && errno == EINTR); ok = count == static_cast<ssize_t>(bytes.size()); }
     close(file); return ok;
 #endif
