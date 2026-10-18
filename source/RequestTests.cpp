@@ -1,4 +1,7 @@
 #include "RequestUsage.h"
+#ifdef _WIN32
+#include "QuotaFiles.h"
+#endif
 #include <iostream>
 static void require(bool value, const char* reason) { if (!value) throw std::runtime_error(reason); }
 static std::string event(const std::string& payload, const char* type = "event_msg") {
@@ -65,6 +68,11 @@ int main() { try {
     framing.feed(large.data(), 17000, [&](const auto& line) { lines.push_back(line); });
     framing.feed(large.data() + 17000, large.size() - 17000, [&](const auto& line) { lines.push_back(line); });
     require(lines.size() == 1 && lines.front() + '\n' == metadataRow, "bounded metadata framing must recover after oversized conversation records and split writes");
+    quota::MetadataLines completionFrames; quota::RequestTracker longReply; std::vector<quota::RequestEntry> longRows;
+    auto longStream = event("{\"type\":\"task_started\",\"turn_id\":\"long-reply\"}") + '\n' + firstUsage() + '\n' +
+        event("{\"type\":\"task_complete\",\"turn_id\":\"long-reply\",\"last_agent_message\":\"" + std::string(60000, 'x') + "\"}") + '\n';
+    for (size_t at = 0; at < longStream.size(); at += 8192) completionFrames.feed(longStream.data() + at, std::min<size_t>(8192, longStream.size() - at), [&](const auto& line) { longReply.consume(line, [&](const auto& row) { longRows.push_back(row); }); });
+    require(longRows.size() == 1 && longRows.front().tokens->total == 130, "large final response content must be skipped while preserving request completion metadata");
     auto root = std::filesystem::temp_directory_path() / ("request-usage-test-" + std::to_string(quota::history_detail::Now()));
     quota::RequestStore store; store.configure(true, root);
     rows[0].quotaStart.observed = rows[0].started - 100; rows[0].quotaStart.weekly = {true, 10, 2000000000};
@@ -89,6 +97,19 @@ int main() { try {
     store.configure(true, unicode);
     for (int i = 0; i < 2005; ++i) { newer.turnId = "row-" + std::to_string(i); newer.ended += 1; require(store.record(newer), "bounded history fixture append"); }
     auto bounded = store.read(); require(bounded.entries.size() == 2000 && bounded.truncated && store.read(3).entries.size() == 3 && store.read(0).entries.empty(), "request viewer must bound rows and report truncation");
+#ifdef _WIN32
+    // 真实文件超过尾读上限，开始/上下文被正文挤出；完成事件仍必须保留为未知用量。
+    auto tailFile = root / "tail.jsonl"; quota::FileFollower follower;
+    auto fresh = [](std::string line) {
+        std::time_t future = std::time(nullptr) + 2; std::tm utc{}; gmtime_s(&utc, &future); char timestamp[32]{};
+        std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc);
+        auto at = line.find("\"timestamp\":\"") + 13; auto end = line.find('"', at); line.replace(at, end - at, timestamp); return line;
+    };
+    { std::ofstream out(tailFile, std::ios::binary); out << fresh(event("{\"type\":\"task_started\",\"turn_id\":\"huge-tail\"}")) << '\n'
+        << std::string(400 * 1024, 'x') << '\n' << fresh(usage(10000, 2000)) << '\n' << fresh(event("{\"type\":\"task_complete\",\"turn_id\":\"huge-tail\"}")) << '\n'; }
+    std::vector<quota::RequestEntry> tails; require(follower.read(tailFile.wstring(), {}, [&](const auto& row) { tails.push_back(row); }), "real tail file must open");
+    require(tails.size() == 1 && tails[0].turnId == "huge-tail" && tails[0].partial && tails[0].started == 0 && !tails[0].tokens && follower.bytesRead <= 256 * 1024, "bounded real file tail must preserve partial completion without reading full conversation");
+#endif
     std::filesystem::remove_all(root);
     std::cout << "PASS request aggregation\n"; return 0;
 } catch (const std::exception& error) { std::cerr << "FAIL " << error.what() << '\n'; return 1; } }

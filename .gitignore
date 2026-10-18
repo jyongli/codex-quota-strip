@@ -17,6 +17,7 @@ status.json
 *.log
 *.jsonl
 quota-history-*.csv
+request-usage-*.csv
 .quota-history-probe-*
 *.bak
 .vs/

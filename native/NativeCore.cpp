@@ -29,14 +29,15 @@ namespace {
 std::string Environment(const char* name) { auto value = getenv(name); return value ? value : ""; }
 bool SafeValue(const std::string& value) { return value.size() <= 4096 && value.find_first_of("\r\n") == std::string::npos && value.find('\0') == std::string::npos; }
 std::string Lower(std::string value) { for (char& c : value) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return value; }
-std::string AuthStamp(const std::string& home) {
+std::string AuthStamp(const std::string& home, long long* modifiedMs = nullptr) {
     struct stat value{};
-    if (stat((std::filesystem::path(home) / "auth.json").c_str(), &value)) return "missing";
+    if (stat((std::filesystem::path(home) / "auth.json").c_str(), &value)) { if (modifiedMs) *modifiedMs = 0; return "missing"; }
 #ifdef __APPLE__
     auto ns = value.st_mtimespec.tv_nsec;
 #else
     auto ns = value.st_mtim.tv_nsec;
 #endif
+    if (modifiedMs) *modifiedMs = static_cast<long long>(value.st_mtime) * 1000 + ns / 1000000;
     return std::to_string(value.st_ino) + "/" + std::to_string(value.st_mtime) + "/" + std::to_string(ns) + "/" + std::to_string(value.st_size);
 }
 struct Fd {
@@ -282,7 +283,13 @@ class SessionWatcher {
                     auto directory = directories.find(static_cast<int>(events[index].ident));
                     if (directory != directories.end()) {
                         if (events[index].fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) { rebuild = true; continue; }
-                        discover(inside(directory->second) ? directory->second : sessions);
+                        if (inside(directory->second)) discover(directory->second);
+                        else if (!watched.count(sessions)) {
+                            // kqueue 父目录事件不带文件名；只检查目标路径是否已长出新一级，不枚举无关目录。
+                            std::error_code error; auto nearest = sessions;
+                            while (!nearest.empty() && !std::filesystem::is_directory(nearest, error)) { auto parent = nearest.parent_path(); if (parent == nearest) break; nearest = parent; error.clear(); }
+                            if (nearest != directory->second) rebuild = true;
+                        }
                     } else {
                         std::filesystem::path path; for (const auto& file : files) if (file.second->descriptor.value == static_cast<int>(events[index].ident)) { path = file.first; break; }
                         if (!path.empty()) follow(path);
@@ -294,8 +301,15 @@ class SessionWatcher {
                     auto event = reinterpret_cast<const inotify_event*>(bytes + offset); offset += sizeof(inotify_event) + event->len;
                     if (event->mask & (IN_Q_OVERFLOW | IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED)) { rebuild = true; continue; }
                     auto directory = directories.find(event->wd); if (directory == directories.end()) continue;
-                    if (!inside(directory->second)) { discover(sessions); continue; }
                     auto path = directory->second / (event->len ? event->name : "");
+                    if (!inside(directory->second)) {
+                        // sessions 已有自己的监听后忽略 home 内 sqlite/auth 等写入；缺失时只响应目标祖先的目录创建。
+                        if (!watched.count(sessions) && (event->mask & IN_ISDIR) && (event->mask & (IN_CREATE | IN_MOVED_TO))) {
+                            auto relative = sessions.lexically_relative(path);
+                            if (!relative.empty() && !relative.is_absolute() && *relative.begin() != "..") rebuild = true;
+                        }
+                        continue;
+                    }
                     if (event->mask & IN_ISDIR) { if (event->mask & (IN_CREATE | IN_MOVED_TO)) discover(path); }
                     else if (path.extension() == ".jsonl" && event->mask & (IN_CREATE | IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO)) follow(path);
                 }
@@ -510,7 +524,7 @@ quota::RequestReadResult Engine::requests(size_t maxRows) { return requests_.rea
 void Engine::configure(Preferences value) {
     if (!Valid(value)) return;
     bool homeChanged, sessionsChanged, recording; unsigned sessionGeneration; std::string currentHome;
-    { std::lock_guard<std::mutex> lock(mutex_); homeChanged = value.home != preferences_.home; if (homeChanged) { state_.snapshot = {}; authIdentity_ = AuthStamp(value.home); history_.reset(); }
+    { std::lock_guard<std::mutex> lock(mutex_); homeChanged = value.home != preferences_.home; if (homeChanged) { state_.snapshot = {}; authIdentity_ = AuthStamp(value.home); authBoundaryMs_ = NowMs(); history_.reset(); }
       sessionsChanged = homeChanged || value.historyEnabled != preferences_.historyEnabled || value.historyDirectory != preferences_.historyDirectory;
       if (sessionsChanged) ++sessionGeneration_;
       history_.configure(value.historyEnabled, value.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(value.historyDirectory));
@@ -521,31 +535,42 @@ void Engine::configure(Preferences value) {
     if (sessionsChanged && sessionWatcher_) sessionWatcher_->configure(currentHome, recording, sessionGeneration);
     wake_.notify_one();
 }
+// 调用者持有 Engine 锁；认证通知与请求采纳共用此核对，避免两个事件线程的先后顺序影响账号归属。
+bool Engine::observeAccountLocked() {
+    const auto identity = AuthStamp(preferences_.home);
+    if (identity == authIdentity_) return false;
+    authIdentity_ = identity; authBoundaryMs_ = NowMs(); state_.snapshot = {}; state_.error = "Account changed; waiting for new quota";
+    history_.reset(); ++sessionGeneration_; ++generation_; queryCancelled_ = true; requested_ = true;
+    return true;
+}
 void Engine::checkAccount() {
     if (stop_.load()) return;
-    std::string home; bool recording = false; unsigned sessionGeneration = 0;
-    { std::lock_guard<std::mutex> lock(mutex_); home = preferences_.home; }
-    auto identity = AuthStamp(home); bool changed = false;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (home == preferences_.home && identity != authIdentity_) {
-            authIdentity_ = identity; state_.snapshot = {}; state_.error = "Account changed; waiting for new quota";
-            history_.reset();
-            recording = preferences_.historyEnabled; sessionGeneration = ++sessionGeneration_;
-            ++generation_; queryCancelled_ = true; requested_ = true; changed = true;
-        }
-    }
+    std::string home; bool recording = false, changed = false; unsigned sessionGeneration = 0;
+    { std::lock_guard<std::mutex> lock(mutex_); changed = observeAccountLocked(); home = preferences_.home; recording = preferences_.historyEnabled; sessionGeneration = sessionGeneration_; }
     if (changed) { if (sessionWatcher_) sessionWatcher_->configure(home, recording, sessionGeneration); wake_.notify_one(); if (changed_) changed_(); }
 }
 void Engine::hostAvailable(bool value) { { std::lock_guard<std::mutex> lock(mutex_); if (hostAvailable_ == value) return; hostAvailable_ = value; requested_ = true; } wake_.notify_one(); }
 void Engine::start(std::function<void()> changed) {
     changed_ = std::move(changed);
-    { std::lock_guard<std::mutex> lock(mutex_); authIdentity_ = AuthStamp(preferences_.home); }
+    { std::lock_guard<std::mutex> lock(mutex_); authIdentity_ = AuthStamp(preferences_.home, &authBoundaryMs_); }
     sessionWatcher_ = std::make_unique<SessionWatcher>(preferences_.home, preferences_.historyEnabled, sessionGeneration_,
         [this](unsigned generation, const quota::RequestEntry& entry) {
-            bool notify = false;
-            { std::lock_guard<std::mutex> lock(mutex_); if (stop_.load() || generation != sessionGeneration_ || !preferences_.historyEnabled) return;
-              auto previous = state_.requestError; notify = requests_.record(entry); state_.requestError = requests_.error(); notify = notify || previous != state_.requestError; }
+            bool notify = false, authChanged = false, recording = false; unsigned sessionGeneration = 0; std::string home;
+            {
+                std::lock_guard<std::mutex> lock(mutex_); if (stop_.load()) return;
+                // 写日志前再次读取真实认证元数据；不能仅依赖另一线程尚未送达的代次通知。
+                authChanged = observeAccountLocked(); notify = authChanged;
+                if (authChanged) { home = preferences_.home; recording = preferences_.historyEnabled; sessionGeneration = sessionGeneration_; }
+                bool unknownOnly = !entry.tokens && !entry.quotaStart.observed && !entry.quotaEnd.observed &&
+                    !entry.quotaStart.fiveHour.present && !entry.quotaStart.weekly.present && !entry.quotaEnd.fiveHour.present && !entry.quotaEnd.weekly.present && !entry.fiveChange && !entry.weeklyChange;
+                // 启动时重建的旧开始行不能绕过账号边界；只有完全未知的尾部完成记录可用结束时间。
+                bool afterBoundary = (entry.started ? entry.started : entry.ended) >= authBoundaryMs_ && (entry.started || unknownOnly);
+                if (!authChanged && generation == sessionGeneration_ && preferences_.historyEnabled && afterBoundary) {
+                    auto previous = state_.requestError; notify = requests_.record(entry); state_.requestError = requests_.error(); notify = notify || previous != state_.requestError;
+                }
+            }
+            // 这里只发非阻塞唤醒，不在 Engine 锁内接触监听器锁或等待监听线程。
+            if (authChanged) { if (sessionWatcher_) sessionWatcher_->configure(home, recording, sessionGeneration); wake_.notify_one(); }
             if (notify && changed_) changed_();
         }, [this](unsigned generation, const std::string& error) {
             bool notify = false;

@@ -51,13 +51,54 @@ public:
 class MetadataLines {
     std::string pending_;
     bool discard_ = false;
+    // task_complete 可能附带很长的最终回复；流式跳过正文值，只留下完成元数据。
+    bool inString_ = false, escaped_ = false, candidate_ = false, waiting_ = false, skipping_ = false;
+    bool skipString_ = false, skipEscaped_ = false;
+    int skipDepth_ = 0;
+    std::string key_;
+    void append(char c) { if (pending_.size() >= 32768) { pending_.clear(); discard_ = true; } else pending_ += c; }
+    void lexicalReset() { inString_ = escaped_ = candidate_ = waiting_ = skipping_ = skipString_ = skipEscaped_ = false; skipDepth_ = 0; key_.clear(); }
 public:
     explicit MetadataLines(bool skipPartial = false) : discard_(skipPartial) {}
-    void reset(bool skipPartial = false) { pending_.clear(); discard_ = skipPartial; }
+    void reset(bool skipPartial = false) { pending_.clear(); discard_ = skipPartial; lexicalReset(); }
     template<class F> void feed(const char* bytes, size_t length, F accept) {
         for (size_t i = 0; i < length; ++i) {
-            if (bytes[i] == '\n') { if (!discard_) accept(pending_); pending_.clear(); discard_ = false; }
-            else if (!discard_) { if (pending_.size() >= 32768) { pending_.clear(); discard_ = true; } else pending_ += bytes[i]; }
+            const char c = bytes[i];
+            if (c == '\n') { if (!discard_) accept(pending_); reset(); continue; }
+            if (discard_) continue;
+            if (skipping_) {
+                if (skipString_) {
+                    if (skipEscaped_) skipEscaped_ = false;
+                    else if (c == '\\') skipEscaped_ = true;
+                    else if (c == '"') { skipString_ = false; if (!skipDepth_) skipping_ = false; }
+                    continue;
+                }
+                if (skipDepth_) {
+                    if (c == '"') skipString_ = true;
+                    else if (c == '{' || c == '[') ++skipDepth_;
+                    else if (c == '}' || c == ']') { if (!--skipDepth_) skipping_ = false; }
+                    continue;
+                }
+                if (c != ',' && c != '}' && c != ']') continue;
+                skipping_ = false; // 原始值后的分隔符仍属于外围 JSON。
+            }
+            if (waiting_) {
+                if (c == ' ' || c == '\r' || c == '\t') continue;
+                for (char v : std::string("null")) append(v);
+                waiting_ = false; skipping_ = true; skipString_ = c == '"'; skipDepth_ = c == '{' || c == '[' ? 1 : 0; skipEscaped_ = false;
+                continue;
+            }
+            append(c);
+            if (inString_) {
+                if (escaped_) { escaped_ = false; key_.clear(); }
+                else if (c == '\\') { escaped_ = true; key_.clear(); }
+                else if (c == '"') { inString_ = false; candidate_ = key_ == "last_agent_message"; }
+                else if (key_.size() <= 64) key_ += c;
+            } else if (c == '"') { inString_ = true; key_.clear(); candidate_ = false; }
+            else if (candidate_) {
+                if (c == ':') { waiting_ = true; candidate_ = false; }
+                else if (c != ' ' && c != '\r' && c != '\t') candidate_ = false;
+            }
         }
     }
 };

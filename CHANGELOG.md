@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 新增每次工作请求的真实 Token 明细、参考账户额度起止快照、请求状态及原生中英文列表／图表，实际金额未知时显示“—”。 / Add real per-request token breakdowns, reference account snapshots, statuses and bilingual native list/charts; unknown actual charges show “—”.
+- 三平台文件事件监听与每日请求 CSV 沿用日志目录及开关；有界尾读、部分记录标记、重放去重、认证边界隔离，不增加模型请求或查询轮询。 / Event-driven request CSV logging on all platforms shares history preferences, with bounded tails, partial markers, replay deduplication and authentication boundaries, without additional model requests or query polling.
 - 新增自选目录的每日 CSV 额度变化日志及记录开关。 / Record quota changes in daily CSV files in a selected directory, with an enable switch.
 - Windows／Linux／macOS 新增原生中英文列表／图表查看、按需有界读取及独立日志错误。 / Native bilingual list/chart viewers, bounded on-demand reads and separate logging errors.
 - 缺失值、重置周期和账号切换保留基线，数值不变时不写盘。 / Preserve missing values and reset/account baselines; avoid writes for unchanged quotas.

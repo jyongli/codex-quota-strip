@@ -74,10 +74,13 @@ class Engine {
     std::unique_ptr<SessionWatcher> sessionWatcher_;
     unsigned sessionGeneration_ = 0;
     std::string authIdentity_;
+    // 独立于监听启动时间：已知请求不能携带上个账号的 token 或额度跨过此边界。
+    long long authBoundaryMs_ = 0;
     bool requested_ = true, manual_ = false, hostAvailable_ = false;
     unsigned generation_ = 0;
     void run();
     void checkAccount();
+    bool observeAccountLocked();
 public:
     explicit Engine(Preferences settings);
     ~Engine();

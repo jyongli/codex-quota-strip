@@ -28,6 +28,7 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 | Local account and settings | Queries use the signed-in local Codex and selected data directory. Settings stay on the computer; authentication changes clear the previous account snapshot. |
 | Reuse Codex proxy settings | Queries read Codex proxy environment settings automatically, without configuring a separate endpoint in the companion. |
 | Quota change history | Daily CSV files in a selected directory contain remaining quotas, changes in percentage points, source and timestamps; view them as a native list or chart. |
+| Per-request usage | Records input, cached input, cache-write input, output, reasoning output and total tokens, reference account snapshots and status; switch between a list and token charts. Unknown actual charges show “—”. |
 | Single instance and cleanup | Repeated launches reuse an instance. Query subprocesses are cleaned up on completion, timeout or app exit. Windows identifies instances by Codex data directory; Linux/macOS use the user configuration directory. |
 
 ### Understanding values and refresh
@@ -46,6 +47,18 @@ Enable “Record quota changes” in Settings, choose a history directory, then 
 - The viewer reads at most the latest 30 UTC days, 2000 rows and 2 MiB. Full files remain on disk without automatic deletion. Changing the directory neither moves nor deletes earlier files; select the old directory to view them again.
 - Logs contain quota values, observation/recording/reset times and source, without credentials or conversations. Disabling recording preserves existing history. Write errors are shown separately and do not replace the displayed quota.
 - This feature is not included in the preview.5 download linked above yet.
+
+### Per-work-request usage (new on the development branch)
+
+Open the history viewer from Settings or the tray/menu bar and select **Work requests**. On Windows, `CodexQuotaStrip.exe --requests` opens that view directly. The list shows completed/interrupted requests, models, token details, reference account quota changes, status and identifiers. The chart shows tokens by request. Refresh only reads local logs.
+
+- A request spans local `task_started` through `task_complete`/`turn_aborted`. Cumulative counter differences aggregate multiple model responses without counting duplicate snapshots. Cached input is part of input; reasoning output is part of output, so neither is added again to the total.
+- Recording uses the existing quota-history switch and selected directory, writing separate UTF-8 `request-usage-YYYY-MM-DD.csv` files. Fields contain request/thread identifiers, model, timestamps, status, tokens and numeric reference account snapshots. Prompts, responses and tool content are excluded. Files remain local and are excluded from packages.
+- Records begin with requests completed after the listener starts; there is no full-session backfill. Missing starts/baselines, counter resets or incomplete data are marked **Partial**. Unavailable tokens show “—” and chart gaps. Running requests appear after completion/interruption.
+- Quota columns show **reference account snapshot changes**. They may include concurrent requests, and the starting snapshot may predate the request. They are not an individually attributable charge. Reset/authentication boundaries do not produce cross-boundary quota differences.
+- Local events do not provide verifiable actual charges per request: the amount is “—”, and actual amount/currency CSV fields stay empty. Subscription percentages cannot be converted into dollars; [official pricing guidance](https://learn.chatgpt.com/docs/pricing) distinguishes API token prices from subscription usage.
+- All platforms use filesystem events, bounded 256 KiB per-file reads and oversized-line skipping. Viewing is limited to the latest 30 days, 2,000 rows/2 MiB. There are no additional online quota queries, model requests or background polling.
+- History and request usage are not included in the preview.5 download linked above.
 
 ### Low-resource design
 

@@ -95,7 +95,7 @@ int main(int argc, char** argv) {
         settings.home = (root / "request-home").string(); settings.historyDirectory = (root / "request-history").string(); settings.online = false;
         std::filesystem::create_directories(settings.home);
         { std::ofstream auth(std::filesystem::path(settings.home) / "auth.json"); auth << "request-account-a"; }
-        nativequota::Engine listener(settings); listener.start([] {});
+        std::atomic<int> requestNotifications{0}; nativequota::Engine listener(settings); listener.start([&] { ++requestNotifications; });
         auto sessions = std::filesystem::path(settings.home) / "sessions/2099/01/01"; std::filesystem::create_directories(sessions);
         auto session = sessions / "rollout-runtime.jsonl";
         { std::ofstream out(session); out << requestFixture("runtime-turn", nativequota::NowMs() + 10); }
@@ -105,6 +105,11 @@ int main(int argc, char** argv) {
         require(requests.entries.size() == 1 && requests.entries[0].turnId == "runtime-turn" && requests.entries[0].tokens && requests.entries[0].tokens->input == 100 && requests.entries[0].tokens->total == 130,
             "Native event-driven session follower must record real request tokens with online queries disabled");
         require(listener.state().snapshot.observed == 0, "Session logging must not launch an account query");
+        std::this_thread::sleep_for(std::chrono::milliseconds(30)); auto notificationsBeforeHomeWrites = requestNotifications.load();
+        for (int index = 0; index < 64; ++index) { std::ofstream unrelated(std::filesystem::path(settings.home) / "state.sqlite-wal", std::ios::app); unrelated << "synthetic unrelated state\n"; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        require(listener.requests().entries.size() == 1 && requestNotifications.load() == notificationsBeforeHomeWrites,
+            "Unrelated home state writes must not replay requests, publish UI changes or query the account");
         // 旧请求仍在文件尾部：即便认证通知先处理，重放后的旧开始行也不能跨账号接上新 token／额度。
         auto crossing = sessions / "rollout-auth-boundary.jsonl"; auto start = nativequota::NowMs() + 10;
         auto prefix = requestFixture("cross-account-turn", start); prefix.erase(prefix.rfind("{\"timestamp\":"));

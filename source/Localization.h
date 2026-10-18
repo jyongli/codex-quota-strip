@@ -48,6 +48,17 @@ inline const wchar_t* Translate(const wchar_t* chinese, bool english) {
         ,{L"仅显示最近 30 日，最多 2000 条",L"Last 30 days, up to 2,000 entries"},{L"已截取最近记录",L"Showing recent entries only"}
         ,{L"条记录",L"entries"},{L"账户",L"Account"},{L"本地事件",L"Local event"},{L"基线",L"Baseline"},{L"变化",L"Change"},{L"重置",L"Reset"}
         ,{L"百分点",L"pp"},{L"已暂停记录，现有记录仍可查看",L"Recording paused; existing history is available"}
+        ,{L"工作请求",L"Work requests"},{L"查看工作请求",L"View work requests"},{L"工作请求…",L"Work requests…"}
+        ,{L"记录额度与工作请求",L"Record quota changes and work requests"}
+        ,{L"无法读取工作请求，请检查日志目录和权限。",L"Cannot read work requests; check directory and permissions."}
+        ,{L"无法记录工作请求，请检查日志目录和权限。",L"Cannot write work requests; check directory and permissions."}
+        ,{L"Codex 配额 — 工作请求",L"Codex Quota — Work requests"},{L"暂无工作请求记录",L"No work requests recorded"}
+        ,{L"模型",L"Model"},{L"状态",L"Status"},{L"实际 Token",L"Actual tokens"},{L"输入 / 缓存命中 / 缓存写入",L"Input / cached / cache write"}
+        ,{L"输出 / 推理",L"Output / reasoning"},{L"账户快照变化 5h / 周",L"Account snapshot change 5h / weekly"},{L"实际金额",L"Actual amount"},{L"会话 / 请求",L"Thread / request"}
+        ,{L"已完成",L"Completed"},{L"已中止",L"Aborted"},{L"已中断",L"Interrupted"},{L"失败",L"Failed"},{L"未完成",L"Incomplete"},{L"部分记录",L"Partial"}
+        ,{L"每个工作请求已观察到的 Token",L"Observed tokens per work request"}
+        ,{L"账户快照可能包含并发工作，基线可能早于请求；不归因于单个请求。金额 — 表示未提供。",L"Account snapshots may include concurrent work and predate this request; changes are not attributed to it. Amount — means unavailable."}
+        ,{L"部分记录只包含可确认的 Token；缺失值保持 —。",L"Partial records contain confirmed tokens only; unavailable values remain —."}
     };
     for (const auto& text : entries) if (std::wcscmp(chinese,text.chinese)==0) return text.english;
     return chinese;

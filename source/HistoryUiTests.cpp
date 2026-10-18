@@ -5,6 +5,7 @@
 #include <commctrl.h>
 #include "QuotaCore.h"
 #include "QuotaHistory.h"
+#include "RequestUsage.h"
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -27,6 +28,88 @@ bool Wait(const std::function<bool()>& ready){auto deadline=GetTickCount64()+500
 bool WaitCloud(const std::function<bool()>& ready){auto deadline=GetTickCount64()+12000;do{if(ready())return true;Sleep(20);}while(GetTickCount64()<deadline);return false;}
 std::wstring Caption(HWND h){wchar_t text[1024]{};GetWindowTextW(h,text,1024);return text;}
 quota::Json State(const std::filesystem::path& path){std::ifstream in(path,std::ios::binary);std::string text((std::istreambuf_iterator<char>(in)),{});try{return quota::JsonParser(text).parse();}catch(...){return {};}}
+void Append(const std::filesystem::path& file,int fiveUsed,int weeklyUsed,long long observed);
+std::wstring ListCell(HWND list,int row,int column){
+    // 只读取本测试拥有的应用列表控件；跨进程 LVM_GETITEMTEXT 需要目标进程内存。
+    DWORD pid=0;GetWindowThreadProcessId(list,&pid);HANDLE process=OpenProcess(PROCESS_VM_OPERATION|PROCESS_VM_READ|PROCESS_VM_WRITE,FALSE,pid);Check(process!=nullptr,"Owned list process must open");
+    void* memory=VirtualAllocEx(process,nullptr,sizeof(LVITEMW)+2048,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);if(!memory){CloseHandle(process);Check(false,"Owned list buffer must allocate");}
+    LVITEMW item{};item.iSubItem=column;item.cchTextMax=1024;item.pszText=reinterpret_cast<wchar_t*>(static_cast<unsigned char*>(memory)+sizeof(item));
+    bool ok=WriteProcessMemory(process,memory,&item,sizeof(item),nullptr)!=FALSE;
+    if(ok)ok=SendMessageTimeoutW(list,LVM_GETITEMTEXTW,row,reinterpret_cast<LPARAM>(memory),SMTO_ABORTIFHUNG,2000,nullptr)!=0;
+    wchar_t text[1024]{};if(ok)ok=ReadProcessMemory(process,item.pszText,text,sizeof(text),nullptr)!=FALSE;VirtualFreeEx(process,memory,0,MEM_RELEASE);CloseHandle(process);Check(ok,"Owned list text must be readable");return text;
+}
+std::string Iso(long long milliseconds){
+    auto seconds=static_cast<time_t>(milliseconds/1000);std::tm utc{};gmtime_s(&utc,&seconds);char text[64]{};
+    sprintf_s(text,"%04d-%02d-%02dT%02d:%02d:%02d.%03lldZ",utc.tm_year+1900,utc.tm_mon+1,utc.tm_mday,utc.tm_hour,utc.tm_min,utc.tm_sec,milliseconds%1000);return text;
+}
+void RolloutRequest(const std::filesystem::path& file,long long stamp,const std::string& turn,bool known=true){
+    std::ofstream out(file,std::ios::app|std::ios::binary);
+    auto event=[&](int offset,const char* type,const std::string& payload){out<<"{\"timestamp\":\""<<Iso(stamp+offset)<<"\",\"type\":\""<<type<<"\",\"payload\":"<<payload<<"}\n";};
+    auto tokens=[](int input,int cached,int write,int output,int reasoning){return "{\"input_tokens\":"+std::to_string(input)+",\"cached_input_tokens\":"+std::to_string(cached)+",\"cache_write_input_tokens\":"+std::to_string(write)+",\"output_tokens\":"+std::to_string(output)+",\"reasoning_output_tokens\":"+std::to_string(reasoning)+",\"total_tokens\":"+std::to_string(input+output)+"}";};
+    auto usage=[&](int offset,int input,int cached,int write,int output,int reasoning,int five,int week){event(offset,"event_msg","{\"type\":\"token_count\",\"info\":{\"total_token_usage\":"+tokens(input,cached,write,output,reasoning)+"},\"rate_limits\":{\"primary\":{\"used_percent\":"+std::to_string(five)+",\"window_minutes\":300,\"resets_at\":2100000000},\"secondary\":{\"used_percent\":"+std::to_string(week)+",\"window_minutes\":10080,\"resets_at\":2100000000}}}");};
+    event(0,"session_meta","{\"id\":\"thread-"+turn+"\"}");if(known)usage(1,100,20,4,10,2,20,40);
+    event(2,"event_msg","{\"type\":\"task_started\",\"turn_id\":\""+turn+"\"}");
+    event(3,"turn_context","{\"turn_id\":\""+turn+"\",\"model\":\"synthetic-model\"}");
+    event(4,"response_item","{\"role\":\"user\",\"content\":\"SYNTHETIC-PROMPT-DO-NOT-STORE\"}");
+    if(known){usage(5,160,30,7,30,8,22,41);usage(6,220,60,10,60,12,24,43);}
+    event(7,"event_msg","{\"type\":\"task_complete\",\"turn_id\":\""+turn+"\"}");
+}
+void CheckRequestChart(HWND chart){
+    RECT size{};GetClientRect(chart,&size);BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=size.right;info.bmiHeader.biHeight=-size.bottom;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
+    void* bits=nullptr;HDC dc=CreateCompatibleDC(nullptr);HBITMAP bitmap=CreateDIBSection(dc,&info,DIB_RGB_COLORS,&bits,nullptr,0);Check(bitmap&&bits,"Request chart memory surface must allocate");auto old=SelectObject(dc,bitmap);PrintWindow(chart,dc,PW_CLIENTONLY);GdiFlush();auto pixels=static_cast<DWORD*>(bits);
+    int bars=0,gap=0;for(int y=50;y<size.bottom-56;++y)for(int x=70;x<size.right-20;++x)if((pixels[y*size.right+x]&0xffffff)==0x93d5b9){++bars;if(x>size.right/2-8&&x<size.right/2+8)++gap;}
+    SelectObject(dc,old);DeleteObject(bitmap);DeleteDC(dc);Check(bars>20&&gap==0,"Request token chart must draw observed totals while leaving the unavailable request empty");
+}
+void CheckWorkRequests(const std::filesystem::path& executable){
+    wchar_t temporary[MAX_PATH]{};GetTempPathW(MAX_PATH,temporary);auto root=std::filesystem::path(temporary)/(L"quota-request-ui-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));
+    auto settings=root/L"CodexQuotaStrip"/L"settings.ini",status=root/L"status.json",sessions=root/L"sessions";
+    std::filesystem::create_directories(settings.parent_path());std::filesystem::create_directories(sessions);{std::ofstream out(settings);out<<"[refresh]\nonline=0\n[display]\nlanguage=en\n";}
+    PROCESS_INFORMATION process{};Target target{};
+    auto cleanup=[&]{if(process.hProcess){if(target.control)SendMessageTimeoutW(target.control,WM_CLOSE,0,0,SMTO_ABORTIFHUNG,2000,nullptr);if(WaitForSingleObject(process.hProcess,5000)!=WAIT_OBJECT_0)TerminateProcess(process.hProcess,1);CloseHandle(process.hThread);CloseHandle(process.hProcess);process={};}};
+    try{
+        wchar_t previous[32768]{};GetEnvironmentVariableW(L"LOCALAPPDATA",previous,32768);SetEnvironmentVariableW(L"LOCALAPPDATA",root.c_str());
+        auto command=L"\""+executable.wstring()+L"\" --local-only --home \""+root.wstring()+L"\" --status \""+status.wstring()+L"\"";STARTUPINFOW startup{};startup.cb=sizeof(startup);startup.dwFlags=STARTF_USESHOWWINDOW;startup.wShowWindow=SW_HIDE;
+        BOOL created=CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process);SetEnvironmentVariableW(L"LOCALAPPDATA",previous);Check(created!=FALSE,"Request fixture must start");target.pid=process.dwProcessId;
+        Check(Wait([&]{EnumWindows(Find,reinterpret_cast<LPARAM>(&target));return target.control&&State(status).get("watching").num==1;}),"Request fixture must watch synthetic rollout files");
+        SendMessageW(target.control,WM_COMMAND,9,0);EnumWindows(Find,reinterpret_cast<LPARAM>(&target));Check(target.history&&SendMessageW(GetDlgItem(target.history,407),CB_GETCURSEL,0,0)==1,"Request tray entry must open the work-request page");
+        HWND list=GetDlgItem(target.history,401);Check(SendMessageW(ListView_GetHeader(list),HDM_GETITEMCOUNT,0,0)==9,"Request list must expose model/status/token breakdown/account snapshot/amount columns");
+        Check(Caption(GetDlgItem(target.history,408)).find(L"not attributed")!=std::wstring::npos,"Account-wide quota changes must not be presented as request consumption");
+        quota::RequestStore store;store.configure(false,settings.parent_path()/L"history");auto stamp=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        RolloutRequest(sessions/L"one.jsonl",stamp,"turn-one");Check(Wait([&]{return store.read().entries.size()==1;}),"A completed real rollout request must be persisted by the native watcher");
+        Check(SendMessageW(list,LVM_GETITEMCOUNT,0,0)==0,"Open request view must not poll after a completed request");SendMessageW(target.history,WM_COMMAND,403,0);
+        Check(ListCell(list,0,1)==L"synthetic-model"&&ListCell(list,0,2)==L"Completed","Request model and completion status must come from rollout metadata");
+        Check(ListCell(list,0,3)==L"170"&&ListCell(list,0,4)==L"120 / 40 / 6"&&ListCell(list,0,5)==L"50 / 10","Multiple responses must aggregate actual token deltas without double counting cached or reasoning tokens");
+        Check(ListCell(list,0,6)==L"80% → 76% (-4.0 pp) / 60% → 57% (-3.0 pp)"&&ListCell(list,0,7)==L"—","Account snapshot before/after values must accompany deltas, while absent money remains an em dash");
+        RolloutRequest(sessions/L"unknown.jsonl",stamp+20,"turn-unknown",false);Check(Wait([&]{return store.read().entries.size()==2;}),"A request without token metadata must remain visible");SendMessageW(target.history,WM_COMMAND,403,0);
+        Check(ListCell(list,0,3)==L"—"&&ListCell(list,0,4)==L"—"&&ListCell(list,0,5)==L"—"&&ListCell(list,0,7)==L"—","Unavailable token counts and actual money must not be fabricated");
+        RolloutRequest(sessions/L"three.jsonl",stamp+40,"turn-three");Check(Wait([&]{return store.read().entries.size()==3;}),"A second measured request must persist");SendMessageW(target.history,WM_COMMAND,403,0);SendMessageW(target.history,WM_COMMAND,402,0);CheckRequestChart(GetDlgItem(target.history,405));
+        // 已开始的请求跨越账号边界时不能归给新账号，重放旧开头也不得复活它。
+        auto boundary=sessions/L"boundary.jsonl";
+        {std::ofstream out(boundary);out<<"{\"timestamp\":\""<<Iso(stamp+50)<<"\",\"type\":\"session_meta\",\"payload\":{\"id\":\"thread-boundary\"}}\n{\"timestamp\":\""<<Iso(stamp+51)<<"\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-boundary\"}}\n";}
+        Append(boundary,25,44,stamp+52);Check(Wait([&]{return State(status).get("observed_ms").num>=stamp+52;}),"Pre-auth request must reach the watcher");
+        {std::ofstream auth(root/L"auth.json");auth<<"synthetic account boundary";}
+        Check(Wait([&]{return State(status).get("observed_ms").num==0;}),"Auth change must clear the previous quota");
+        auto afterAuth=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()+10;
+        {std::ofstream out(boundary,std::ios::app);out<<"{\"timestamp\":\""<<Iso(afterAuth)<<"\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn-boundary\"}}\n";}
+        Append(boundary,26,45,afterAuth+1);Check(Wait([&]{return State(status).get("observed_ms").num>=afterAuth+1;}),"Fresh post-auth quota must still update");Check(store.read().entries.size()==3,"A request crossing the auth boundary must not be attributed to the new account");
+        // 有界尾部只看见结束事件时，保留一条所有用量未知的部分记录。
+        auto tailStamp=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()+10;
+        {std::ofstream tail(sessions/L"end-only.jsonl");tail<<"{\"timestamp\":\""<<Iso(tailStamp)<<"\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn-tail-only\"}}\n";}
+        Check(Wait([&]{return store.read().entries.size()==4;}),"Known completion with an unavailable beginning must remain visible after the auth boundary");SendMessageW(target.history,WM_COMMAND,403,0);
+        Check(ListCell(list,0,2).find(L"Partial")!=std::wstring::npos&&ListCell(list,0,3)==L"—"&&ListCell(list,0,6)==L"— / —"&&ListCell(list,0,7)==L"—","Unknown-start request must not inherit token, quota or money values");
+        SendMessageW(target.control,WM_COMMAND,7,0);EnumWindows(Find,reinterpret_cast<LPARAM>(&target));Check(GetDlgItem(target.settings,306)!=nullptr,"Settings must link directly to work requests");
+        SendMessageW(GetDlgItem(target.settings,208),CB_SETCURSEL,0,0);SendMessageW(target.settings,WM_COMMAND,302,0);Check(Caption(target.history)==L"Codex 配额 — 工作请求","Open request view must translate live with settings");
+        SendMessageW(target.settings,WM_COMMAND,305,0);Check(SendMessageW(GetDlgItem(target.history,407),CB_GETCURSEL,0,0)==0,"Existing quota history must remain accessible");SendMessageW(target.settings,WM_COMMAND,306,0);Check(SendMessageW(GetDlgItem(target.history,407),CB_GETCURSEL,0,0)==1,"Settings request link must select work requests");
+        auto disabledStamp=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()+20;
+        SendMessageW(GetDlgItem(target.settings,209),BM_SETCHECK,BST_UNCHECKED,0);SendMessageW(target.settings,WM_COMMAND,302,0);RolloutRequest(sessions/L"disabled.jsonl",disabledStamp,"turn-disabled");Check(Wait([&]{return State(status).get("observed_ms").num>=disabledStamp+6;}),"Disabling request recording must preserve normal quota updates");Check(store.read().entries.size()==4,"Disabled recording must not append completed requests");
+        // 只有请求事件、没有额度更新时，写入失败也必须独立通知 UI。
+        auto blocked=root/L"blocked-requests";SendMessageW(GetDlgItem(target.settings,210),WM_SETTEXT,0,reinterpret_cast<LPARAM>(blocked.c_str()));SendMessageW(GetDlgItem(target.settings,209),BM_SETCHECK,BST_CHECKED,0);SendMessageW(target.settings,WM_COMMAND,302,0);
+        std::filesystem::remove(blocked);{std::ofstream out(blocked);out<<"synthetic blocked request directory";}
+        RolloutRequest(sessions/L"request-error.jsonl",disabledStamp+20,"turn-error",false);Check(Wait([&]{return Caption(GetDlgItem(target.settings,213)).find(L"工作请求")!=std::wstring::npos;}),"Request-only write failure must be surfaced independently of quota updates");
+        for(const auto& entry:std::filesystem::directory_iterator(settings.parent_path()/L"history"))if(entry.path().filename().wstring().find(L"request-usage-")==0){std::ifstream input(entry.path());std::string bytes((std::istreambuf_iterator<char>(input)),{});Check(bytes.find("SYNTHETIC-PROMPT")==std::string::npos,"Request persistence must not copy conversation text");}
+        cleanup();std::cout<<"PASS: real work-request rollout aggregation, unknown values, amount em dash, account-change labelling, chart gaps, language and disabled capture\n";
+    }catch(...){cleanup();throw;}
+}
 void CheckChart(HWND chart){
     // PrintWindow 将本测试图表渲染到内存位图，不读取屏幕或用户桌面。
     RECT size{};GetClientRect(chart,&size);BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=size.right;info.bmiHeader.biHeight=-size.bottom;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
@@ -115,6 +198,7 @@ int wmain(int argc,wchar_t** argv){
         SendMessageTimeoutW(target.control,WM_COMMAND,8,0,SMTO_ABORTIFHUNG,2000,nullptr);
         Check(Wait([&]{EnumWindows(Find,reinterpret_cast<LPARAM>(&target));return target.history&&IsWindowVisible(target.history);}),"History command must open a real native history window");
         Check(GetDlgItem(target.history,401)&&GetDlgItem(target.history,402)&&GetDlgItem(target.history,403),"History must expose list, chart toggle and refresh controls");
+        Check(GetDlgItem(target.history,407)&&SendMessageW(GetDlgItem(target.history,407),CB_GETCOUNT,0,0)==2,"History viewer must offer quota and work-request pages");
         std::cout<<"PASS: native history entry point\n";
         SendMessageW(target.control,WM_COMMAND,7,0);EnumWindows(Find,reinterpret_cast<LPARAM>(&target));Check(target.settings!=nullptr,"Settings must open alongside history");
         Check(GetDlgItem(target.settings,209)&&GetDlgItem(target.settings,210)&&GetDlgItem(target.settings,304)&&GetDlgItem(target.settings,305),"History settings must expose enable, directory, browse and viewer");
@@ -158,6 +242,7 @@ int wmain(int argc,wchar_t** argv){
         SendMessageW(target.history,WM_CLOSE,0,0);Check(WaitForSingleObject(process.hProcess,0)==WAIT_TIMEOUT,"Closing history must preserve the quota companion");
         SendMessageTimeoutW(target.control,WM_CLOSE,0,0,SMTO_ABORTIFHUNG,2000,nullptr);Check(WaitForSingleObject(process.hProcess,5000)==WAIT_OBJECT_0,"History fixture must exit cleanly");
         CloseHandle(process.hThread);CloseHandle(process.hProcess);process={};target={};if(IsWindow(original))SetForegroundWindow(original);
+        CheckWorkRequests(std::filesystem::absolute(argv[1]));
         CheckAccountIsolation(std::filesystem::absolute(argv[1]),std::filesystem::absolute(argv[0]));
         std::wcout<<L"PASS: history persistence, deduplication, manual list/chart, language, disabled capture and window lifetimes; fixture "<<root.wstring()<<L"\n";return 0;
     }catch(const std::exception& error){
