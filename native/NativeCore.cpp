@@ -224,7 +224,7 @@ class SessionWatcher {
                         if (oldest->second->modified > modified(attributes)) return; files.erase(oldest);
                     }
                     auto file = std::make_unique<File>(configuration.cutoff); file->descriptor = std::move(descriptor); file->device = attributes.st_dev; file->inode = attributes.st_ino;
-                    file->offset = std::max<off_t>(0, attributes.st_size - 256 * 1024); file->lines.reset(file->offset > 0);
+                    file->offset = std::max<off_t>(0, attributes.st_size - static_cast<off_t>(quota::RequestInitialReadLimit)); file->lines.reset(file->offset > 0);
 #ifdef __APPLE__
                     struct kevent event; EV_SET(&event, file->descriptor.value, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE | NOTE_EXTEND | NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE, 0, nullptr);
                     if (kevent(notification.value, &event, 1, nullptr, 0, nullptr)) { problem_(configuration.generation, watchError); return; }
@@ -232,11 +232,12 @@ class SessionWatcher {
                     found = files.emplace(path, std::move(file)).first;
                 }
                 auto& file = *found->second; file.modified = modified(attributes);
-                if (attributes.st_size < file.offset || attributes.st_size - file.offset > 256 * 1024) {
+                const auto readLimit = file.tracker.active() ? quota::RequestActiveReadLimit : quota::RequestInitialReadLimit;
+                if (attributes.st_size < file.offset || attributes.st_size - file.offset > static_cast<off_t>(readLimit)) {
                     // 截断／一次性大追加时重新建立部分基线，不把被跳过的 token 猜入本次请求。
-                    file.offset = std::max<off_t>(0, attributes.st_size - 256 * 1024); file.tracker.reset(); file.lines.reset(file.offset > 0);
+                    file.offset = std::max<off_t>(0, attributes.st_size - static_cast<off_t>(readLimit)); file.tracker.reset(); file.lines.reset(file.offset > 0);
                 }
-                char bytes[8192]; size_t remaining = 256 * 1024;
+                char bytes[8192]; size_t remaining = readLimit;
                 while (remaining && !stopping_.load()) {
                     auto count = pread(file.descriptor.value, bytes, std::min(remaining, sizeof(bytes)), file.offset);
                     if (count < 0 && errno == EINTR) continue; if (count <= 0) break;

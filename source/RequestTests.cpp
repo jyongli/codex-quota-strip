@@ -109,6 +109,13 @@ int main() { try {
         << std::string(400 * 1024, 'x') << '\n' << fresh(usage(10000, 2000)) << '\n' << fresh(event("{\"type\":\"task_complete\",\"turn_id\":\"huge-tail\"}")) << '\n'; }
     std::vector<quota::RequestEntry> tails; require(follower.read(tailFile.wstring(), {}, [&](const auto& row) { tails.push_back(row); }), "real tail file must open");
     require(tails.size() == 1 && tails[0].turnId == "huge-tail" && tails[0].partial && tails[0].started == 0 && !tails[0].tokens && follower.bytesRead <= 256 * 1024, "bounded real file tail must preserve partial completion without reading full conversation");
+    auto trackedFile = root / "large-completion.jsonl"; quota::FileFollower tracked; std::vector<quota::RequestEntry> trackedRows;
+    auto saveTracked = [&](const auto& row) { trackedRows.push_back(row); };
+    { std::ofstream out(trackedFile, std::ios::binary); out << fresh(event("{\"type\":\"task_started\",\"turn_id\":\"tracked-large\"}")) << '\n' << fresh(firstUsage()) << '\n'; }
+    require(tracked.read(trackedFile.wstring(), {}, saveTracked), "active request fixture must read");
+    { std::ofstream out(trackedFile, std::ios::binary | std::ios::app); out << fresh(event("{\"type\":\"task_complete\",\"turn_id\":\"tracked-large\",\"last_agent_message\":\"" + std::string(400 * 1024, 'x') + "\"}")) << '\n'; }
+    tracked.read(trackedFile.wstring(), {}, saveTracked);
+    require(trackedRows.size() == 1 && trackedRows.front().tokens && trackedRows.front().tokens->total == 130 && !trackedRows.front().partial, "an already tracked request must survive a single 400KiB final-response append");
 #endif
     std::filesystem::remove_all(root);
     std::cout << "PASS request aggregation\n"; return 0;

@@ -4,6 +4,9 @@
 #include <set>
 
 namespace quota {
+// 初读只取小尾部；已追踪的请求允许有界追赶大回复，正文流式丢弃，内存上限不随之增加。
+inline constexpr size_t RequestInitialReadLimit = 256 * 1024;
+inline constexpr size_t RequestActiveReadLimit = 8 * 1024 * 1024;
 // cachedInput 属于 input，reasoningOutput 属于 output；不可重复加进 total。
 struct TokenCounts {
     long long input = 0, cachedInput = 0, cacheWriteInput = 0, output = 0, reasoningOutput = 0, total = 0;
@@ -31,6 +34,7 @@ class RequestTracker {
     void finish(long long time, const std::string& status, const std::function<void(const RequestEntry&)>& accept);
 public:
     explicit RequestTracker(long long minimumCompletedMs = 0) : minimumCompleted_(minimumCompletedMs) {}
+    bool active() const { return active_.has_value(); }
     void reset() { thread_.clear(); previous_.reset(); latestQuota_ = {}; active_.reset(); seenStart_ = false; quotaDuring_ = false; lastTime_ = 0; finished_.clear(); finishedOrder_.clear(); }
     void consume(const std::string&, const std::function<void(const RequestEntry&)>&);
 };

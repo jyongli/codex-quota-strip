@@ -135,6 +135,16 @@ int main(int argc, char** argv) {
         deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         while (!hasTurn("cross-account-turn") && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         require(!hasTurn("cross-account-turn"), "Auth boundary must reject a replayed old-account request instead of combining cross-account tokens or quota");
+        // 已追踪请求的完成行可含超出普通尾读上限的回复；数字计数必须保留，正文不落盘。
+        auto largeStart = nativequota::NowMs() + 10; auto largePrefix = requestFixture("large-final-reply", largeStart);
+        largePrefix.erase(largePrefix.rfind("{\"timestamp\":"));
+        { std::ofstream out(session, std::ios::app); out << largePrefix; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        { std::ofstream out(session, std::ios::app); out << "{\"timestamp\":\"" << iso(nativequota::NowMs() + 10) << "\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"large-final-reply\",\"last_agent_message\":\"" << std::string(400 * 1024, 'x') << "\"}}\n"; }
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!hasTurn("large-final-reply") && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        auto largeRows = listener.requests(); auto largeRow = std::find_if(largeRows.entries.begin(), largeRows.entries.end(), [](const auto& row) { return row.turnId == "large-final-reply"; });
+        require(largeRow != largeRows.entries.end() && largeRow->tokens && largeRow->tokens->total == 130 && !largeRow->partial, "Native listener must retain complete token counts across a 400KiB final-response append");
         const auto recordedBeforeDisable = listener.requests().entries.size();
         settings.historyEnabled = false; listener.configure(settings);
         { std::ofstream out(session, std::ios::app); out << requestFixture("disabled-turn", nativequota::NowMs() + 10); }

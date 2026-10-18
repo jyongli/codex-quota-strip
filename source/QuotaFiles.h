@@ -53,8 +53,8 @@ public:
             if (c.identity != identity || c.volume != info.dwVolumeSerialNumber) { c.offset = 0; c.lines.reset(); c.requests.reset(); }
             c.identity = identity; c.volume = info.dwVolumeSerialNumber;
         }
-        const long long maxBytes = 256 * 1024;
         if (end.QuadPart < c.offset) { c.offset = 0; c.lines.reset(); c.requests.reset(); }
+        const auto maxBytes = static_cast<long long>(c.requests.active() ? RequestActiveReadLimit : RequestInitialReadLimit);
         if (end.QuadPart - c.offset > maxBytes) { c.offset = end.QuadPart - maxBytes; c.lines.reset(true); c.requests.reset(); }
         LARGE_INTEGER start{}; start.QuadPart = c.offset;
         if (!SetFilePointerEx(file, start, nullptr, FILE_BEGIN)) return false;
