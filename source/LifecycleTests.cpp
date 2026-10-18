@@ -24,10 +24,14 @@ void checkPackagedProfile(const std::filesystem::path& executable,const std::fil
     try{
         auto command=L"\""+copied.wstring()+L"\" --local-only --taskbar-and-codex --history --home \""+home.wstring()+L"\"";
         STARTUPINFOW start{};start.cb=sizeof(start);check(CreateQuotaFixtureProcess(command,home,start,process)!=FALSE,"Package-profile fixture must start");t.pid=process.dwProcessId;
-        check(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&t));return t.control&&t.strip&&t.history;}),"Package-profile fixture must expose controller, strip and history");
+        // 句柄可能在 WM_CREATE 尚未返回时已可枚举；等待初始化后的 ShowWindow，避免重入启动中的窗口创建。
+        check(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&t));return t.control&&t.strip&&t.history&&IsWindowVisible(t.history);}),"Package-profile fixture must expose controller, strip and history");
         for(UINT position:{2u,1u})for(UINT page:{8u,7u,9u}){
             SendMessageTimeoutW(t.control,WM_COMMAND,page,0,SMTO_ABORTIFHUNG,2000,nullptr);EnumWindows(find,reinterpret_cast<LPARAM>(&t));
-            HWND panel=page==7?t.settings:t.history;check(panel&&front(panel)&&GetForegroundWindow()==panel,"Package-profile companion panel must become foreground");
+            HWND panel=nullptr;
+            bool activated=wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&t));panel=page==7?t.settings:t.history;if(!panel||!IsWindowVisible(panel))return false;front(panel);return GetForegroundWindow()==panel;});
+            if(!activated)std::cerr<<"Package fixture focus: page="<<page<<" position="<<position<<" panel="<<reinterpret_cast<UINT_PTR>(panel)<<" exists="<<IsWindow(panel)<<" visible="<<IsWindowVisible(panel)<<" minimized="<<IsIconic(panel)<<" foreground="<<reinterpret_cast<UINT_PTR>(GetForegroundWindow())<<" pid="<<t.pid<<"\n";
+            check(activated,"Package-profile companion panel must become foreground");
             // 强制经过真实的显示布局入口，避免仅在前台事件尚未到达时偶然观察到隐藏状态。
             SendMessageTimeoutW(t.control,WM_COMMAND,position,0,SMTO_ABORTIFHUNG,2000,nullptr);
             check(wait([&]{return !IsWindowVisible(t.strip)&&!GetWindow(t.strip,GW_OWNER);}),"A companion installed under the Codex package profile must never attach its strip to its own settings/history window");
