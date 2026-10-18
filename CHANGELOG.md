@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 修复 Windows 商店包缓存路径被误识别为 Codex 主程序、导致配额条附着到插件配置／历史窗口的问题；排除自身进程并核对主程序文件名。 / Prevent Windows Store cache paths from misidentifying companion settings/history as Codex; exclude the companion process and verify the host executable name.
 - 三平台额度图连接有效点：连续变化使用实线，基线／来源／重置边界使用虚线参考连接并显示说明；缺失值保持断线。 / Connect valid quota points on all platforms using solid continuous segments and labelled dashed baseline/source/reset references, preserving missing-value gaps.
 - 修复从 Codex 切回已打开的配置／历史窗口时配额条未及时隐藏、遮挡输入的问题；复用前台事件，不新增轮询。 / Hide the quota strip immediately when returning to existing settings/history windows, preventing obstructed input without adding polling.
 - 新增每次工作请求的真实 Token 明细、参考账户额度起止快照、请求状态及原生中英文列表／图表，实际金额未知时显示“—”。 / Add real per-request token breakdowns, reference account snapshots, statuses and bilingual native list/charts; unknown actual charges show “—”.

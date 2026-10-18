@@ -14,12 +14,34 @@ void check(bool yes,const char* message){if(!yes)throw std::runtime_error(messag
 bool wait(const std::function<bool()>& condition){auto start=GetTickCount64();do{if(condition())return true;MSG msg{};while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}Sleep(20);}while(GetTickCount64()-start<4000);return false;}
 bool front(HWND h){DWORD from=GetWindowThreadProcessId(GetForegroundWindow(),nullptr),self=GetCurrentThreadId();bool attached=from&&from!=self&&AttachThreadInput(self,from,TRUE);BOOL ok=SetForegroundWindow(h);if(attached)AttachThreadInput(self,from,FALSE);return ok!=FALSE;}
 HWND newHost(){HWND h=CreateWindowExW(0,L"QuotaLifecycleHost",L"Quota host lifecycle fixture",WS_OVERLAPPEDWINDOW,200,160,900,620,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);ShowWindow(h,SW_SHOW);front(h);return h;}
+void checkPackagedProfile(const std::filesystem::path& executable,const std::filesystem::path& root){
+    // Store 版 Codex 会把本地安装目录映射到其包缓存下；使用真实路径识别，不能传测试主进程覆盖参数。
+    auto copied=root/L"OpenAI.Codex_fixture"/L"LocalCache"/L"Local"/L"CodexQuotaStrip"/L"CodexQuotaStrip.exe";
+    std::filesystem::create_directories(copied.parent_path());std::filesystem::copy_file(executable,copied);
+    auto home=root/L"profile-fixture";std::filesystem::create_directories(home/L"sessions");
+    PROCESS_INFORMATION process{};Target t{};
+    auto cleanup=[&]{if(process.hProcess){if(t.control)SendMessageTimeoutW(t.control,WM_CLOSE,0,0,SMTO_ABORTIFHUNG,2000,nullptr);bool exited=wait([&]{return WaitForSingleObject(process.hProcess,0)==WAIT_OBJECT_0;});if(!exited)TerminateProcess(process.hProcess,1);CloseHandle(process.hThread);CloseHandle(process.hProcess);process={};}};
+    try{
+        auto command=L"\""+copied.wstring()+L"\" --local-only --taskbar-and-codex --history --home \""+home.wstring()+L"\"";
+        STARTUPINFOW start{};start.cb=sizeof(start);check(CreateQuotaFixtureProcess(command,home,start,process)!=FALSE,"Package-profile fixture must start");t.pid=process.dwProcessId;
+        check(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&t));return t.control&&t.strip&&t.history;}),"Package-profile fixture must expose controller, strip and history");
+        for(UINT position:{2u,1u})for(UINT page:{8u,7u,9u}){
+            SendMessageTimeoutW(t.control,WM_COMMAND,page,0,SMTO_ABORTIFHUNG,2000,nullptr);EnumWindows(find,reinterpret_cast<LPARAM>(&t));
+            HWND panel=page==7?t.settings:t.history;check(panel&&front(panel)&&GetForegroundWindow()==panel,"Package-profile companion panel must become foreground");
+            // 强制经过真实的显示布局入口，避免仅在前台事件尚未到达时偶然观察到隐藏状态。
+            SendMessageTimeoutW(t.control,WM_COMMAND,position,0,SMTO_ABORTIFHUNG,2000,nullptr);
+            check(wait([&]{return !IsWindowVisible(t.strip)&&!GetWindow(t.strip,GW_OWNER);}),"A companion installed under the Codex package profile must never attach its strip to its own settings/history window");
+        }
+        cleanup();std::cout<<"PASS: package-profile installation never treats its own settings, history or requests as Codex, for left/top display\n";
+    }catch(...){cleanup();throw;}
+}
 int wmain(int argc,wchar_t** argv){
     if(argc<2)return 2;HWND original=GetForegroundWindow(),host=nullptr;PROCESS_INFORMATION process{};Target t{};
     // 使用正常顶层窗口类；STATIC 顶层窗口会被 WindowFromPoint 当作静态文字跳过。
     WNDCLASSW cls{};cls.hInstance=GetModuleHandleW(nullptr);cls.lpfnWndProc=DefWindowProcW;cls.lpszClassName=L"QuotaLifecycleHost";cls.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);RegisterClassW(&cls);
     wchar_t temp[MAX_PATH]{};GetTempPathW(MAX_PATH,temp);auto root=std::filesystem::path(temp)/(L"quota-life-"+std::to_wstring(GetTickCount64()));std::filesystem::create_directories(root/L"sessions");
     try{
+        checkPackagedProfile(std::filesystem::absolute(argv[1]),root);
         host=newHost();check(host!=nullptr,"Fake host must exist");
         std::wstring cmd=L"\""+std::filesystem::absolute(argv[1]).wstring()+L"\" --local-only --taskbar-and-codex --top --host-pid "+std::to_wstring(GetCurrentProcessId())+L" --home \""+root.wstring()+L"\"";
         STARTUPINFOW start{};start.cb=sizeof(start);check(CreateQuotaFixtureProcess(cmd,root,start,process)!=FALSE,"Helper must start");t.pid=process.dwProcessId;
@@ -56,6 +78,7 @@ int wmain(int argc,wchar_t** argv){
             ownPanel(7,t.settings);ownPanel(8,t.history);ownPanel(9,t.history);
         }
         std::cout<<"PASS: left/top strip hides for existing settings, quota history and requests, restores on host focus, and leaves panel input unobstructed\n";
-        SendMessageTimeoutW(t.control,WM_CLOSE,0,0,SMTO_ABORTIFHUNG,2000,nullptr);check(wait([&]{return WaitForSingleObject(process.hProcess,0)==WAIT_OBJECT_0;}),"Quota helper must exit cleanly");DestroyWindow(host);host=nullptr;CloseHandle(process.hThread);CloseHandle(process.hProcess);if(IsWindow(original))front(original);return 0;
+        SendMessageTimeoutW(t.control,WM_CLOSE,0,0,SMTO_ABORTIFHUNG,2000,nullptr);check(wait([&]{return WaitForSingleObject(process.hProcess,0)==WAIT_OBJECT_0;}),"Quota helper must exit cleanly");DestroyWindow(host);host=nullptr;CloseHandle(process.hThread);CloseHandle(process.hProcess);process={};t={};
+        if(IsWindow(original))front(original);return 0;
     }catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<"\n";if(t.control)SendMessageTimeoutW(t.control,WM_CLOSE,0,0,SMTO_ABORTIFHUNG,1000,nullptr);if(process.hProcess){wait([&]{return WaitForSingleObject(process.hProcess,0)==WAIT_OBJECT_0;});CloseHandle(process.hThread);CloseHandle(process.hProcess);}if(host)DestroyWindow(host);if(IsWindow(original))front(original);return 1;}
 }

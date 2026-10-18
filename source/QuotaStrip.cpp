@@ -313,14 +313,17 @@ bool IsCodexWindow(HWND candidate) {
     if (!candidate || candidate == window || !IsWindowVisible(candidate) || GetAncestor(candidate, GA_ROOT) != candidate) return false;
     if (GetWindow(candidate, GW_OWNER)) return false;
     DWORD pid = 0; GetWindowThreadProcessId(candidate, &pid);
+    // Store 的路径虚拟化会把本程序放到 OpenAI.Codex_ 包缓存里；自己的界面永远不是宿主。
+    if (pid == GetCurrentProcessId()) return false;
     if(explicitHostPid)return pid==explicitHostPid;
     quota::Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
     if (!process.valid()) return false;
     wchar_t path[32768]; DWORD length = static_cast<DWORD>(std::size(path));
     if (!QueryFullProcessImageNameW(process, 0, path, &length)) return false;
     auto lower = Lower(std::wstring(path, length));
-    return lower.find(L"\\openai.codex_") != std::wstring::npos ||
-        (lower.find(L"\\openai\\codex\\") != std::wstring::npos && EndsWith(lower, L"\\chatgpt.exe"));
+    // 同时核对桌面主程序文件名，不能仅凭所在目录包含 Codex 包名认定为 Codex 窗口。
+    return EndsWith(lower, L"\\chatgpt.exe") &&
+        (lower.find(L"\\openai.codex_") != std::wstring::npos || lower.find(L"\\openai\\codex\\") != std::wstring::npos);
 }
 void CALLBACK OnHostEvent(HWINEVENTHOOK, DWORD event, HWND candidate, LONG object, LONG child, DWORD, DWORD) {
     if (closing || !controller) return;
