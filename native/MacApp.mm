@@ -70,7 +70,7 @@ static NSString* HistoryDelta(const std::optional<double>& value) { return value
             if (!value.present) { previousRow = nullptr; continue; }
             auto point = NSMakePoint(left + (right - left) * (row.recorded - start) / span, bottom + (top - bottom) * std::clamp(100.0 - value.used, 0.0, 100.0) / 100.0);
             // 基线/重置用虚线参考连接；不把不同区间的跨度当作消耗。
-            if (previousRow) { auto kind = quota::HistoryLineBetween(*previousRow, row, metric != 0); if (kind != quota::HistoryLineKind::None) {
+            if (previousRow) { auto kind = quota::HistoryLineBetween(*previousRow, row, metric != 0); if (kind != quota::HistoryLineKind::Gap) {
                 auto line = [NSBezierPath bezierPath]; line.lineWidth = 2;
                 if (kind == quota::HistoryLineKind::Dashed) { CGFloat pattern[]{4, 4}; [line setLineDash:pattern count:2 phase:0]; }
                 [color setStroke]; [line moveToPoint:previous]; [line lineToPoint:point]; [line stroke];

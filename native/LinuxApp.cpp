@@ -375,7 +375,7 @@ struct App {
                 double x = left + (right - left) * (row.recorded - start) / span;
                 double y = bottom - (bottom - top) * std::clamp(100.0 - value.used, 0.0, 100.0) / 100.0;
                 // 参考快照可用虚线相连；缺失点中断路径，不插值为零。
-                if (previous) { auto kind = quota::HistoryLineBetween(*previous, row, metric != 0); if (kind != quota::HistoryLineKind::None) {
+                if (previous) { auto kind = quota::HistoryLineBetween(*previous, row, metric != 0); if (kind != quota::HistoryLineKind::Gap) {
                     double pattern[]{4, 4}; cairo_set_dash(context, kind == quota::HistoryLineKind::Dashed ? pattern : nullptr, kind == quota::HistoryLineKind::Dashed ? 2 : 0, 0);
                     cairo_new_path(context); cairo_move_to(context, previousX, previousY); cairo_line_to(context, x, y); cairo_stroke(context);
                 } }

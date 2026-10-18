@@ -25,7 +25,7 @@ int main() {
     require(quota::HistoryLineBetween(previous, current, true) == quota::HistoryLineKind::Dashed, "source changes must not appear as continuous consumption");
     current.source = previous.source; current.snapshot.weekly.resets += 1;
     require(quota::HistoryLineBetween(previous, current, true) == quota::HistoryLineKind::Dashed, "quota period changes use reference connections");
-    require(quota::HistoryLineBetween(previous, current, false) == quota::HistoryLineKind::None, "missing five-hour quota must not produce a connected zero-value series");
+    require(quota::HistoryLineBetween(previous, current, false) == quota::HistoryLineKind::Gap, "missing five-hour quota must not produce a connected zero-value series");
     auto file = std::filesystem::directory_iterator(root)->path(); auto size = std::filesystem::file_size(file);
     snapshot.observed += 1; require(!history.record(snapshot, "account") && std::filesystem::file_size(file) == size, "unchanged quota must not rewrite a log");
     snapshot.weekly.used = 22.5; snapshot.observed += 1;

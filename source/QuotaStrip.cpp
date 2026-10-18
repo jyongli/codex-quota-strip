@@ -735,7 +735,7 @@ void PaintHistoryChart(HWND h,HDC target){
                 int x=left+static_cast<int>((right-left)*static_cast<double>(entry.recorded-first)/span);
                 int y=bottom-static_cast<int>((bottom-top)*std::clamp(100.0-value.used,0.0,100.0)/100.0);
                 // 重启/来源切换后的已知点也连起来；用虚线明确它不是可计算消耗的连续区间。
-                if(previous){auto kind=quota::HistoryLineBetween(*previous,entry,series!=0);if(kind!=quota::HistoryLineKind::None){SelectObject(dc,kind==quota::HistoryLineKind::Dashed?dashed:pen);MoveToEx(dc,previousPoint.x,previousPoint.y,nullptr);LineTo(dc,x,y);}}
+                if(previous){auto kind=quota::HistoryLineBetween(*previous,entry,series!=0);if(kind!=quota::HistoryLineKind::Gap){SelectObject(dc,kind==quota::HistoryLineKind::Dashed?dashed:pen);MoveToEx(dc,previousPoint.x,previousPoint.y,nullptr);LineTo(dc,x,y);}}
                 SelectObject(dc,pen);int radius=std::max(2,historyTheme.px(3));Ellipse(dc,x-radius,y-radius,x+radius+1,y+radius+1);previous=&entry;previousPoint={x,y};
             }
             SelectObject(dc,previousBrush);SelectObject(dc,previousPen);DeleteObject(brush);DeleteObject(dashed);DeleteObject(pen);
