@@ -44,6 +44,7 @@ Enable “Record quota changes” in Settings, choose a history directory, then 
 
 - The first valid sample establishes a baseline. Subsequent records are appended only when values, windows, sources or reset times change. UTF-8 CSV files are named `quota-history-YYYY-MM-DD.csv` using UTC dates and can be opened in spreadsheet software.
 - Changes represent **remaining percentage points**: 80% → 77.5% is −2.5. Account changes and window resets start a new baseline for differences. Unknown windows remain blank and break the chart line instead of becoming zero.
+- Charts connect valid points: solid lines for continuous changes, dashed reference lines across new baselines, source changes or quota resets. Dashed lines do not imply measurable consumption; missing windows still leave gaps.
 - The viewer reads at most the latest 30 UTC days, 2000 rows and 2 MiB. Full files remain on disk without automatic deletion. Changing the directory neither moves nor deletes earlier files; select the old directory to view them again.
 - Logs contain quota values, observation/recording/reset times and source, without credentials or conversations. Disabling recording preserves existing history. Write errors are shown separately and do not replace the displayed quota.
 - This feature is not included in the preview.5 download linked above yet.

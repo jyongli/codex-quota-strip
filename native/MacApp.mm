@@ -64,17 +64,19 @@ static NSString* HistoryDelta(const std::optional<double>& value) { return value
     if (rows.empty()) { label(Text(Translate("No quota changes recorded yet.", chinese)), left + 12, top - 35); return; }
     auto start = rows.front().recorded, end = rows.back().recorded; double span = std::max(1LL, end - start);
     for (int metric = 0; metric < 2; ++metric) {
-        NSColor* color = metric ? NSColor.systemGreenColor : NSColor.systemBlueColor; bool connected = false; NSPoint previous{}; long long previousReset = 0;
+        NSColor* color = metric ? NSColor.systemGreenColor : NSColor.systemBlueColor; const quota::HistoryEntry* previousRow = nullptr; NSPoint previous{};
         for (const auto& row : rows) {
             const auto& value = metric ? row.snapshot.weekly : row.snapshot.fiveHour;
-            if (!value.present) { connected = false; continue; }
+            if (!value.present) { previousRow = nullptr; continue; }
             auto point = NSMakePoint(left + (right - left) * (row.recorded - start) / span, bottom + (top - bottom) * std::clamp(100.0 - value.used, 0.0, 100.0) / 100.0);
-            // 不跨基线、重置或缺失值连线，窗口未知时不绘为零额度。
-            if (connected && row.kind == "change" && value.resets == previousReset) {
-                auto line = [NSBezierPath bezierPath]; line.lineWidth = 2; [color setStroke]; [line moveToPoint:previous]; [line lineToPoint:point]; [line stroke];
-            }
+            // 基线/重置用虚线参考连接；不把不同区间的跨度当作消耗。
+            if (previousRow) { auto kind = quota::HistoryLineBetween(*previousRow, row, metric != 0); if (kind != quota::HistoryLineKind::None) {
+                auto line = [NSBezierPath bezierPath]; line.lineWidth = 2;
+                if (kind == quota::HistoryLineKind::Dashed) { CGFloat pattern[]{4, 4}; [line setLineDash:pattern count:2 phase:0]; }
+                [color setStroke]; [line moveToPoint:previous]; [line lineToPoint:point]; [line stroke];
+            } }
             [color setFill]; [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(point.x - 2.5, point.y - 2.5, 5, 5)] fill];
-            previous = point; connected = true; previousReset = value.resets;
+            previous = point; previousRow = &row;
         }
     }
     label(HistoryTime(start), left, 20); if (right - left > 360) label(HistoryTime(end), right - 160, 20);
@@ -420,7 +422,7 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if ([self showingRequests]) {
         [message appendFormat:@"\n%@\n%@", [self ui:@"Account quota changes may include other work. Actual cost is unavailable."], [self ui:@"Cached input is part of input; reasoning is part of output."]];
         if (requestRows.entries.empty()) [message appendFormat:@"\n%@", [self ui:@"No work requests recorded yet."]];
-    } else if (historyRows.entries.empty()) [message appendFormat:@"\n%@", [self ui:@"No quota changes recorded yet."]];
+    } else { [message appendFormat:@"\n%@", [self ui:@"Solid: continuous records. Dashed: baseline/source/reset boundaries, reference only, not consumption. Missing values stay disconnected."]]; if (historyRows.entries.empty()) [message appendFormat:@"\n%@", [self ui:@"No quota changes recorded yet."]]; }
     historyMessage.stringValue = message;
 }
 - (void)refreshHistory:(id)sender { (void)sender; if (historyWindow) { if ([self showingRequests]) requestRows = engine->requests(2000); else historyRows = engine->history(2000); [self renderHistory]; } }

@@ -17,6 +17,15 @@ int main() {
     auto rows = history.read();
     require(rows.entries.size() == 1 && rows.entries[0].snapshot.weekly.used == 20 && !rows.entries[0].snapshot.fiveHour.present,
         "a weekly-only quota snapshot must be written and readable in the selected directory");
+    auto previous = rows.entries[0], current = previous; current.kind = "baseline";
+    require(quota::HistoryLineBetween(previous, current, true) == quota::HistoryLineKind::Dashed, "restarted quota baselines must remain visually connected as references");
+    current.kind = "change"; current.weeklyChange = -1;
+    require(quota::HistoryLineBetween(previous, current, true) == quota::HistoryLineKind::Solid, "comparable quota changes use solid connections");
+    current.source = "local-event";
+    require(quota::HistoryLineBetween(previous, current, true) == quota::HistoryLineKind::Dashed, "source changes must not appear as continuous consumption");
+    current.source = previous.source; current.snapshot.weekly.resets += 1;
+    require(quota::HistoryLineBetween(previous, current, true) == quota::HistoryLineKind::Dashed, "quota period changes use reference connections");
+    require(quota::HistoryLineBetween(previous, current, false) == quota::HistoryLineKind::None, "missing five-hour quota must not produce a connected zero-value series");
     auto file = std::filesystem::directory_iterator(root)->path(); auto size = std::filesystem::file_size(file);
     snapshot.observed += 1; require(!history.record(snapshot, "account") && std::filesystem::file_size(file) == size, "unchanged quota must not rewrite a log");
     snapshot.weekly.used = 22.5; snapshot.observed += 1;

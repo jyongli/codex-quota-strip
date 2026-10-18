@@ -326,7 +326,7 @@ struct App {
         if (showingRequests()) {
             message += "\n" + std::string(ui("Account quota changes may include other work. Actual cost is unavailable.")) + "\n" + ui("Cached input is part of input; reasoning is part of output.");
             if (requestRows.entries.empty()) message += "\n" + std::string(ui("No work requests recorded yet."));
-        } else if (historyRows.entries.empty()) message += "\n" + std::string(ui("No quota changes recorded yet."));
+        } else { message += "\n" + std::string(ui("Solid: continuous records. Dashed: baseline/source/reset boundaries, reference only, not consumption. Missing values stay disconnected.")); if (historyRows.entries.empty()) message += "\n" + std::string(ui("No quota changes recorded yet.")); }
         gtk_label_set_text(GTK_LABEL(historyMessage), message.c_str()); gtk_widget_queue_draw(historyChart);
     }
     void refreshHistory() { if (showingRequests()) requestRows = engine.requests(2000); else historyRows = engine.history(2000); renderHistory(); }
@@ -367,18 +367,20 @@ struct App {
         auto start = historyRows.entries.front().recorded, end = historyRows.entries.back().recorded;
         double span = std::max(1LL, end - start);
         for (int metric = 0; metric < 2; ++metric) {
-            bool connected = false; long long previousReset = 0;
+            const quota::HistoryEntry* previous = nullptr; double previousX = 0, previousY = 0;
             cairo_set_source_rgb(context, metric ? .30 : .35, metric ? .83 : .68, metric ? .57 : .98); cairo_set_line_width(context, 2);
             for (const auto& row : historyRows.entries) {
                 const auto& value = metric ? row.snapshot.weekly : row.snapshot.fiveHour;
-                if (!value.present) { connected = false; continue; }
+                if (!value.present) { previous = nullptr; continue; }
                 double x = left + (right - left) * (row.recorded - start) / span;
                 double y = bottom - (bottom - top) * std::clamp(100.0 - value.used, 0.0, 100.0) / 100.0;
-                // 重置或重新建立基线时不跨事件连接；缺失窗口也不当作 0%。
-                if (!connected || row.kind != "change" || value.resets != previousReset) cairo_move_to(context, x, y);
-                else cairo_line_to(context, x, y);
-                cairo_stroke(context); cairo_arc(context, x, y, 2.5, 0, 6.283185307); cairo_fill(context); cairo_move_to(context, x, y);
-                connected = true; previousReset = value.resets;
+                // 参考快照可用虚线相连；缺失点中断路径，不插值为零。
+                if (previous) { auto kind = quota::HistoryLineBetween(*previous, row, metric != 0); if (kind != quota::HistoryLineKind::None) {
+                    double pattern[]{4, 4}; cairo_set_dash(context, kind == quota::HistoryLineKind::Dashed ? pattern : nullptr, kind == quota::HistoryLineKind::Dashed ? 2 : 0, 0);
+                    cairo_new_path(context); cairo_move_to(context, previousX, previousY); cairo_line_to(context, x, y); cairo_stroke(context);
+                } }
+                cairo_set_dash(context, nullptr, 0, 0); cairo_new_path(context); cairo_arc(context, x, y, 2.5, 0, 6.283185307); cairo_fill(context);
+                previous = &row; previousX = x; previousY = y;
             }
         }
         label(historyTime(start), left, bottom + 12);

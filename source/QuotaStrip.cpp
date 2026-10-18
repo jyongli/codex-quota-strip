@@ -659,7 +659,7 @@ void PopulateHistory(){
     if(!GetPreferences().historyEnabled)summary+=L" · "+std::wstring(Ui(L"已暂停记录，现有记录仍可查看"));
     SetWindowTextW(GetDlgItem(historyWindow,404),summary.c_str());
     SetWindowTextW(GetDlgItem(historyWindow,406),HistoryDirectory(GetPreferences()).c_str());
-    std::wstring explanation=historyRequests?std::wstring(Ui(L"账户快照可能包含并发工作，基线可能早于请求；不归因于单个请求。金额 — 表示未提供。"))+L"\n"+Ui(L"部分记录只包含可确认的 Token；缺失值保持 —。"):L"";
+    std::wstring explanation=historyRequests?std::wstring(Ui(L"账户快照可能包含并发工作，基线可能早于请求；不归因于单个请求。金额 — 表示未提供。"))+L"\n"+Ui(L"部分记录只包含可确认的 Token；缺失值保持 —。"):Ui(L"实线：连续记录。虚线：重新记录、来源切换或额度重置，仅作参考连接，不表示消耗。缺失值不连线。");
     SetWindowTextW(GetDlgItem(historyWindow,408),explanation.c_str());
     InvalidateRect(GetDlgItem(historyWindow,405),nullptr,FALSE);
 }
@@ -727,17 +727,18 @@ void PaintHistoryChart(HWND h,HDC target){
     else{
         auto first=historyRows.entries.front().recorded,last=historyRows.entries.back().recorded,span=std::max(1LL,last-first);
         for(int series=0;series<2;++series){
-            HPEN pen=CreatePen(PS_SOLID,std::max(1,historyTheme.px(2)),series?Warning:Accent);auto previousPen=SelectObject(dc,pen);bool connected=false;
+            auto color=series?Warning:Accent;HPEN pen=CreatePen(PS_SOLID,std::max(1,historyTheme.px(2)),color),dashed=CreatePen(PS_DASH,1,color);auto previousPen=SelectObject(dc,pen);HBRUSH brush=CreateSolidBrush(color);auto previousBrush=SelectObject(dc,brush);
+            const quota::HistoryEntry* previous=nullptr;POINT previousPoint{};
             for(const auto& entry:historyRows.entries){
-                const auto& value=series?entry.snapshot.weekly:entry.snapshot.fiveHour;const auto& change=series?entry.weeklyChange:entry.fiveChange;
-                if(!value.present){connected=false;continue;}
+                const auto& value=series?entry.snapshot.weekly:entry.snapshot.fiveHour;
+                if(!value.present){previous=nullptr;continue;}
                 int x=left+static_cast<int>((right-left)*static_cast<double>(entry.recorded-first)/span);
                 int y=bottom-static_cast<int>((bottom-top)*std::clamp(100.0-value.used,0.0,100.0)/100.0);
-                // 基线、周期重置及缺失窗口都断开旧线段；不把周期恢复当作消耗。
-                if(connected&&entry.kind=="change"&&change)LineTo(dc,x,y);else MoveToEx(dc,x,y,nullptr);
-                SetPixelV(dc,x,y,series?Warning:Accent);connected=true;
+                // 重启/来源切换后的已知点也连起来；用虚线明确它不是可计算消耗的连续区间。
+                if(previous){auto kind=quota::HistoryLineBetween(*previous,entry,series!=0);if(kind!=quota::HistoryLineKind::None){SelectObject(dc,kind==quota::HistoryLineKind::Dashed?dashed:pen);MoveToEx(dc,previousPoint.x,previousPoint.y,nullptr);LineTo(dc,x,y);}}
+                SelectObject(dc,pen);int radius=std::max(2,historyTheme.px(3));Ellipse(dc,x-radius,y-radius,x+radius+1,y+radius+1);previous=&entry;previousPoint={x,y};
             }
-            SelectObject(dc,previousPen);DeleteObject(pen);
+            SelectObject(dc,previousBrush);SelectObject(dc,previousPen);DeleteObject(brush);DeleteObject(dashed);DeleteObject(pen);
         }
         label(LocalTime(first),{left,bottom+historyTheme.px(8),right,bounds.bottom},Muted);
         label(LocalTime(last),{left,bottom+historyTheme.px(8),right,bounds.bottom},Muted,DT_RIGHT|DT_VCENTER|DT_SINGLELINE);

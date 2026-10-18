@@ -119,6 +119,32 @@ void CheckChart(HWND chart){
     std::cout<<"Chart "<<size.right<<"x"<<size.bottom<<" series pixels="<<fivePixels<<","<<weeklyPixels<<" sample="<<std::hex<<pixels[(size.bottom/2)*size.right+size.right/2]<<std::dec<<"\n";
     SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);Check(fivePixels>10&&weeklyPixels>10,"GDI history chart must draw both actual quota series");
 }
+void CheckQuotaConnections(HWND history,HWND settings,const std::filesystem::path& originalDirectory){
+    // 真实查看器读取合成 CSV；检查两点之间的像素，而非只数端点，避免散点图也被判为通过。
+    auto directory=originalDirectory.parent_path()/L"connected-chart";std::filesystem::create_directories(directory);
+    auto now=quota::history_detail::Now();std::vector<quota::HistoryEntry> entries(6);
+    for(size_t i=0;i<entries.size();++i){auto& row=entries[i];row.recorded=now-6000+static_cast<long long>(i)*1000;row.snapshot.observed=row.recorded;row.source="account";row.kind=i==0||i==1?"baseline":i==3?"reset":"change";row.snapshot.fiveHour={true,i<3?20.0+i*10:5.0+(i-3)*5,static_cast<long long>(i<3?2000000000:2000000300)};row.snapshot.weekly={true,i<3?40.0+i*10:10.0+(i-3)*10,static_cast<long long>(i<3?2000000000:2000000300)};if(row.kind=="change"){row.fiveChange=-10;row.weeklyChange=-10;}}
+    entries[4].snapshot.fiveHour={};entries[4].fiveChange.reset();entries[5].fiveChange.reset();
+    {std::ofstream out(directory/("quota-history-"+quota::history_detail::Day(now)+".csv"),std::ios::binary);out<<quota::history_detail::Header();for(const auto& row:entries)out<<quota::history_detail::Serialize(row);}
+    SendMessageW(GetDlgItem(settings,210),WM_SETTEXT,0,reinterpret_cast<LPARAM>(directory.c_str()));SendMessageW(settings,WM_COMMAND,302,0);SendMessageW(history,WM_COMMAND,403,0);
+    HWND chart=GetDlgItem(history,405);RECT bounds{};GetClientRect(chart,&bounds);auto px=[&](int n){return MulDiv(n,GetDpiForWindow(chart),96);};
+    BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=bounds.right;info.bmiHeader.biHeight=-bounds.bottom;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
+    void* bits=nullptr;HDC dc=CreateCompatibleDC(nullptr);HBITMAP bitmap=CreateDIBSection(dc,&info,DIB_RGB_COLORS,&bits,nullptr,0);Check(bitmap&&bits,"Connected chart fixture surface must allocate");auto old=SelectObject(dc,bitmap);PrintWindow(chart,dc,PW_CLIENTONLY);GdiFlush();auto pixels=static_cast<DWORD*>(bits);
+    auto segment=[&](size_t first,size_t last,bool weekly){
+        int left=px(52),right=bounds.right-px(20),top=px(40),bottom=bounds.bottom-px(52);auto point=[&](size_t i){const auto& w=weekly?entries[i].snapshot.weekly:entries[i].snapshot.fiveHour;return POINT{left+static_cast<int>((right-left)*static_cast<double>(i)/5),bottom-static_cast<int>((bottom-top)*(100-w.used)/100)};};
+        auto a=point(first),b=point(last);int hit=0,total=0;DWORD tint=weekly?0xefbb79:0x93d5b9;
+        for(int x=a.x+px(8);x<b.x-px(8);++x){int y=a.y+static_cast<int>((b.y-a.y)*static_cast<double>(x-a.x)/(b.x-a.x));bool found=false;for(int offset=-px(2);offset<=px(2);++offset)if(y+offset>=0&&y+offset<bounds.bottom&&(pixels[(y+offset)*bounds.right+x]&0xffffff)==tint)found=true;hit+=found;++total;}
+        return std::pair<int,int>{hit,total};
+    };
+    auto baseline=segment(0,1,true),continuous=segment(1,2,true),reset=segment(2,3,true),missing=segment(3,5,false);
+    SelectObject(dc,old);DeleteObject(bitmap);DeleteDC(dc);
+    Check(baseline.first>baseline.second/5&&baseline.first<baseline.second*19/20,"Quota points across new baselines must be connected with a dashed reference line");
+    Check(continuous.first>continuous.second*4/5,"Continuous quota observations must remain joined by a solid line");
+    Check(reset.first>reset.second/5&&reset.first<reset.second*19/20,"Quota cycle resets must be joined with a dashed reference line");
+    Check(missing.first==0,"Unavailable quota must keep a real gap rather than interpolate a fabricated value");
+    SendMessageW(GetDlgItem(settings,210),WM_SETTEXT,0,reinterpret_cast<LPARAM>(originalDirectory.c_str()));SendMessageW(settings,WM_COMMAND,302,0);SendMessageW(history,WM_COMMAND,403,0);
+    std::cout<<"PASS: quota chart joins valid observations, uses dashed boundaries and preserves missing-value gaps\n";
+}
 // 只产生真实 token_count 结构的合成额度，不写入认证或会话正文。
 void Append(const std::filesystem::path& file,int fiveUsed,int weeklyUsed,long long observed){
     auto seconds=static_cast<time_t>(observed/1000);static const long long resetBase=seconds;std::tm utc{};gmtime_s(&utc,&seconds);
@@ -229,6 +255,7 @@ int wmain(int argc,wchar_t** argv){
         SendMessageW(target.history,WM_COMMAND,403,0);Check(SendMessageW(list,LVM_GETITEMCOUNT,0,0)==2,"Manual history refresh must read the new change");
         SendMessageW(target.history,WM_COMMAND,402,0);Check(IsWindowVisible(GetDlgItem(target.history,405))&&!IsWindowVisible(list),"Chart mode must expose the native GDI chart");
         CheckChart(GetDlgItem(target.history,405));
+        CheckQuotaConnections(target.history,target.settings,directory);
         SendMessageW(target.history,WM_COMMAND,402,0);Check(IsWindowVisible(list),"List mode must remain available");
         SendMessageW(GetDlgItem(target.settings,209),BM_SETCHECK,BST_UNCHECKED,0);SendMessageW(target.settings,WM_COMMAND,302,0);
         Append(log,30,50,stamp+30);Check(Wait([&]{return State(status).get("weekly_remaining").num==50;}),"Disabled logging must not stop quota updates");

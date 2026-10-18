@@ -31,6 +31,15 @@ struct HistoryEntry {
     std::optional<double> fiveChange, weeklyChange;
     std::string source, kind;
 };
+enum class HistoryLineKind { None, Solid, Dashed };
+// 实线表示可比较的连续记录；虚线仅连接参考快照，不能解释为跨基线/账号/周期的消耗。
+inline HistoryLineKind HistoryLineBetween(const HistoryEntry& previous, const HistoryEntry& current, bool weekly) {
+    const auto& before = weekly ? previous.snapshot.weekly : previous.snapshot.fiveHour;
+    const auto& after = weekly ? current.snapshot.weekly : current.snapshot.fiveHour;
+    if (!before.present || !after.present) return HistoryLineKind::None;
+    const auto& change = weekly ? current.weeklyChange : current.fiveChange;
+    return current.kind == "change" && change && previous.source == current.source && before.resets == after.resets ? HistoryLineKind::Solid : HistoryLineKind::Dashed;
+}
 struct HistoryReadResult {
     std::vector<HistoryEntry> entries; // 按记录顺序从旧到新，查看器可倒序显示。
     bool truncated = false;

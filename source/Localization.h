@@ -56,6 +56,7 @@ inline const wchar_t* Translate(const wchar_t* chinese, bool english) {
         ,{L"模型",L"Model"},{L"状态",L"Status"},{L"实际 Token",L"Actual tokens"},{L"输入 / 缓存命中 / 缓存写入",L"Input / cached / cache write"}
         ,{L"输出 / 推理",L"Output / reasoning"},{L"账户快照变化 5h / 周",L"Account snapshot change 5h / weekly"},{L"实际金额",L"Actual amount"},{L"会话 / 请求",L"Thread / request"}
         ,{L"已完成",L"Completed"},{L"已中止",L"Aborted"},{L"已中断",L"Interrupted"},{L"失败",L"Failed"},{L"未完成",L"Incomplete"},{L"部分记录",L"Partial"}
+        ,{L"实线：连续记录。虚线：重新记录、来源切换或额度重置，仅作参考连接，不表示消耗。缺失值不连线。",L"Solid: continuous records. Dashed: a new baseline, source change or quota reset; reference only, not consumption. Missing values stay disconnected."}
         ,{L"每个工作请求已观察到的 Token",L"Observed tokens per work request"}
         ,{L"账户快照可能包含并发工作，基线可能早于请求；不归因于单个请求。金额 — 表示未提供。",L"Account snapshots may include concurrent work and predate this request; changes are not attributed to it. Amount — means unavailable."}
         ,{L"部分记录只包含可确认的 Token；缺失值保持 —。",L"Partial records contain confirmed tokens only; unavailable values remain —."}

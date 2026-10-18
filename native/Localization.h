@@ -27,6 +27,7 @@ inline const char* Translate(const char* english, bool chinese) {
         {"Latest 30 UTC days; at most 2000 records. Refresh manually.","最近 30 个 UTC 日，最多 2000 条；请手动刷新。"},
         {"Showing newest records; older records were omitted.","正在显示最新记录，较早记录已省略。"},
         {"No quota changes recorded yet.","尚无额度变化记录。"},{"History recording is disabled.","历史记录已关闭。"},
+        {"Solid: continuous records. Dashed: baseline/source/reset boundaries, reference only, not consumption. Missing values stay disconnected.","实线：连续记录。虚线：重新记录、来源切换或额度重置，仅作参考连接，不表示消耗。缺失值不连线。"},
         {"Time (local)","时间（本地）"},{"5h remaining","5 小时剩余"},{"Weekly remaining","周剩余"},
         {"5h change (pp)","5 小时变化（百分点）"},{"Weekly change (pp)","周变化（百分点）"},
         {"Source / event","来源／事件"},{"Baseline","基线"},{"Change","变化"},{"Reset","重置"},
