@@ -289,7 +289,9 @@ struct App {
             auto count = [&](long long quota::TokenCounts::*member) { return row.tokens ? std::to_string((*row.tokens).*member) : "—"; };
             std::string status = ui(row.status == "completed" ? "Completed" : row.status == "interrupted" ? "Interrupted" : row.status == "incomplete" ? "Incomplete" : row.status.c_str());
             if (row.partial) status += " / " + std::string(ui("Partial"));
-            std::vector<std::string> values{historyTime(row.ended), row.model.empty() ? "—" : row.model, count(&quota::TokenCounts::input), count(&quota::TokenCounts::cachedInput),
+            // 标题仅用于显示；解析缺失时依次保留会话 ID 和本地化未知占位。
+            const std::string conversation = !row.conversationLabel.empty() ? row.conversationLabel : !row.threadId.empty() ? row.threadId : ui("Unknown conversation");
+            std::vector<std::string> values{historyTime(row.ended), conversation, row.model.empty() ? "—" : row.model, count(&quota::TokenCounts::input), count(&quota::TokenCounts::cachedInput),
                 count(&quota::TokenCounts::cacheWriteInput), count(&quota::TokenCounts::output), count(&quota::TokenCounts::reasoningOutput), count(&quota::TokenCounts::total),
                 historyPercent(row.quotaStart.fiveHour) + " → " + historyPercent(row.quotaEnd.fiveHour), historyPercent(row.quotaStart.weekly) + " → " + historyPercent(row.quotaEnd.weekly),
                 historyDelta(row.fiveChange), historyDelta(row.weeklyChange), "—", status,
@@ -305,9 +307,18 @@ struct App {
         auto columns = gtk_tree_view_get_columns(GTK_TREE_VIEW(historyTable));
         for (auto item = columns; item; item = item->next) gtk_tree_view_remove_column(GTK_TREE_VIEW(historyTable), GTK_TREE_VIEW_COLUMN(item->data));
         g_list_free(columns);
-        std::vector<const char*> titles = showingRequests() ? std::vector<const char*>{"Time (local)", "Model", "Input tokens", "Cached input tokens", "Cache write tokens", "Output tokens", "Reasoning tokens", "Total tokens", "5h quota (start → end)", "Weekly quota (start → end)", "5h account change (pp)", "Weekly account change (pp)", "Actual cost", "Status", "Thread / turn"} :
+        std::vector<const char*> titles = showingRequests() ? std::vector<const char*>{"Time (local)", "Conversation", "Model", "Input tokens", "Cached input tokens", "Cache write tokens", "Output tokens", "Reasoning tokens", "Total tokens", "5h quota (start → end)", "Weekly quota (start → end)", "5h account change (pp)", "Weekly account change (pp)", "Actual cost", "Status", "Thread / turn"} :
             std::vector<const char*>{"Time (local)", "5h remaining", "Weekly remaining", "5h change (pp)", "Weekly change (pp)", "Source / event"};
-        int column = 0; for (auto title : titles) { auto cell = gtk_cell_renderer_text_new(); auto heading = gtk_tree_view_column_new_with_attributes(ui(title), cell, "text", column++, nullptr); gtk_tree_view_column_set_resizable(heading, TRUE); gtk_tree_view_append_column(GTK_TREE_VIEW(historyTable), heading); }
+        int column = 0;
+        for (auto title : titles) {
+            auto cell = gtk_cell_renderer_text_new(); auto heading = gtk_tree_view_column_new_with_attributes(ui(title), cell, "text", column, nullptr);
+            if (showingRequests() && column == 1) {
+                // 长标题保持单行省略，不让内容自动撑宽列表；仍允许用户在有界范围内调整。
+                g_object_set(cell, "ellipsize", PANGO_ELLIPSIZE_END, "single-paragraph-mode", TRUE, nullptr);
+                gtk_tree_view_column_set_sizing(heading, GTK_TREE_VIEW_COLUMN_FIXED); gtk_tree_view_column_set_min_width(heading, 120); gtk_tree_view_column_set_max_width(heading, 420); gtk_tree_view_column_set_fixed_width(heading, 260);
+            }
+            gtk_tree_view_column_set_resizable(heading, TRUE); gtk_tree_view_append_column(GTK_TREE_VIEW(historyTable), heading); ++column;
+        }
         if (showingRequests()) renderRequests();
         else for (auto it = historyRows.entries.rbegin(); it != historyRows.entries.rend(); ++it) {
             const auto& row = *it;
@@ -403,7 +414,7 @@ struct App {
         g_signal_connect(refresh, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) { static_cast<App*>(data)->refreshHistory(); }), this);
         historyMessage = gtk_label_new(""); gtk_label_set_xalign(GTK_LABEL(historyMessage), 0); gtk_label_set_line_wrap(GTK_LABEL(historyMessage), TRUE); gtk_box_pack_start(GTK_BOX(box), historyMessage, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), historyStack, TRUE, TRUE, 0);
-        GType types[15]; std::fill(std::begin(types), std::end(types), G_TYPE_STRING); historyModel = gtk_list_store_newv(15, types);
+        GType types[16]; std::fill(std::begin(types), std::end(types), G_TYPE_STRING); historyModel = gtk_list_store_newv(16, types);
         historyTable = gtk_tree_view_new_with_model(GTK_TREE_MODEL(historyModel));
         auto scroll = gtk_scrolled_window_new(nullptr, nullptr); gtk_container_add(GTK_CONTAINER(scroll), historyTable); gtk_stack_add_titled(GTK_STACK(historyStack), scroll, "list", ui("List"));
         historyChart = gtk_drawing_area_new(); gtk_widget_set_size_request(historyChart, 380, 240);
@@ -460,18 +471,29 @@ struct App {
                 gtk_combo_box_set_active(GTK_COMBO_BOX(app.historyKind), 1);
                 if (gtk_tree_model_iter_n_children(GTK_TREE_MODEL(app.historyModel), nullptr) != 0) return fail("Request history must start empty");
                 quota::RequestEntry request; request.turnId = "smoke-turn"; request.ended = NowMs(); request.tokens = quota::TokenCounts{100, 20, 0, 30, 5, 130}; request.status = "completed";
-                auto unknown = request; unknown.turnId = "unknown-turn"; unknown.ended += 10; unknown.tokens.reset(); unknown.partial = true;
-                app.requestRows.entries = {request, unknown}; app.renderHistory();
+                request.threadId = "smoke-source-thread"; request.conversationLabel = "配额工具 · Smoke conversation " + std::string(600, 'x');
+                auto fallback = request; fallback.turnId = "fallback-turn"; fallback.threadId = "smoke-fallback-thread"; fallback.conversationLabel.clear(); fallback.ended += 5;
+                auto unknown = request; unknown.turnId = "unknown-turn"; unknown.threadId.clear(); unknown.conversationLabel.clear(); unknown.ended += 10; unknown.tokens.reset(); unknown.partial = true;
+                app.requestRows.entries = {request, fallback, unknown}; app.renderHistory();
                 GtkTreeIter firstRow; gchar *cost = nullptr, *input = nullptr; gtk_tree_model_get_iter_first(GTK_TREE_MODEL(app.historyModel), &firstRow);
-                gtk_tree_model_get(GTK_TREE_MODEL(app.historyModel), &firstRow, 12, &cost, 2, &input, -1);
+                gtk_tree_model_get(GTK_TREE_MODEL(app.historyModel), &firstRow, 13, &cost, 3, &input, -1);
                 bool unknownPreserved = cost && input && std::string(cost) == "—" && std::string(input) == "—"; g_free(cost); g_free(input);
-                if (!unknownPreserved || gtk_tree_model_iter_n_children(GTK_TREE_MODEL(app.historyModel), nullptr) != 2) return fail("Request list must preserve unknown tokens and actual cost");
+                if (!unknownPreserved || gtk_tree_model_iter_n_children(GTK_TREE_MODEL(app.historyModel), nullptr) != 3) return fail("Request list must preserve unknown tokens and actual cost");
+                // 检查实际单元格值，覆盖标题优先、原始 ID 回退及未知对话的双语显示。
+                auto cellText = [&](int row, int column) { GtkTreeIter iter; gchar* value = nullptr; gtk_tree_model_iter_nth_child(GTK_TREE_MODEL(app.historyModel), &iter, nullptr, row); gtk_tree_model_get(GTK_TREE_MODEL(app.historyModel), &iter, column, &value, -1); std::string result = value ? value : ""; g_free(value); return result; };
+                auto conversationColumn = gtk_tree_view_get_column(GTK_TREE_VIEW(app.historyTable), 1);
+                if (cellText(0, 1) != "Unknown conversation" || cellText(1, 1) != fallback.threadId || cellText(2, 1) != request.conversationLabel || cellText(2, 15) != "smoke-source-thread / smoke-turn" ||
+                    gtk_tree_view_column_get_fixed_width(conversationColumn) != 260 || gtk_tree_view_column_get_max_width(conversationColumn) > 420) return fail("Conversation column must prefer the title, retain ID fallbacks and limit long-title width");
+                auto languagePrefs = app.engine.preferences(); languagePrefs.chinese = true; app.engine.configure(languagePrefs); app.renderHistory();
+                if (cellText(0, 1) != "未知对话" || std::string(gtk_tree_view_column_get_title(gtk_tree_view_get_column(GTK_TREE_VIEW(app.historyTable), 1))) != "所属对话") return fail("Unknown conversation and column title must translate into Chinese");
+                languagePrefs.chinese = false; app.engine.configure(languagePrefs); app.renderHistory();
                 surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 800, 400); context = cairo_create(surface); app.drawHistory(context, 800, 400); cairo_destroy(context); cairo_surface_destroy(surface);
                 gtk_widget_destroy(app.historyWindow);
                 app.testPassed = true; std::cout << "PASS: Linux tray/settings, X11 focus hiding, move-following, restore and host exit\n";
                 std::cout << "PASS: Linux isolated history directory persistence, empty/list/chart states and synthetic drawing\n";
                 std::cout << "PASS: Linux disabled history avoids directory probes; scrollable settings keep Save reachable\n";
                 std::cout << "PASS: Linux request selector, token list/chart and unknown actual cost\n";
+                std::cout << "PASS: Linux conversation title, ID/unknown fallbacks, localization and bounded column width\n";
                 if (app.config) gtk_widget_destroy(app.config);
                 auto usage = std::make_shared<rusage>(); getrusage(RUSAGE_SELF, usage.get());
                 auto measurement = new std::pair<App*, std::shared_ptr<rusage>>(&app, usage);

@@ -65,7 +65,7 @@ public:
             c.offset += count; remaining -= count; bytesRead += count; ++reads;
             c.lines.feed(bytes, count, [&](const std::string& line) {
                 Snapshot snapshot; if (ParseEvent(line, snapshot) && accept) accept(snapshot);
-                if (request) c.requests.consume(line, request);
+                if (request) c.requests.consume(line, [&](const RequestEntry& entry){auto value=entry;if(value.threadId.empty())value.threadId=request_detail::ThreadFromFile(std::filesystem::path(name));request(value);});
             });
         }
         if (files.size() > 64) {

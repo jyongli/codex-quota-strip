@@ -1,4 +1,5 @@
 #include "NativeCore.h"
+#include "../source/ConversationNames.h"
 #include "../source/ProxyConfig.h"
 #include <spawn.h>
 #include <sys/file.h>
@@ -244,7 +245,7 @@ class SessionWatcher {
                     file.offset += count; remaining -= static_cast<size_t>(count);
                     file.lines.feed(bytes, static_cast<size_t>(count), [&](const std::string& line) {
                         // Tracker 只保存数字、标识与模型，不将提示词或会话正文写入日志。
-                        file.tracker.consume(line, [&](const quota::RequestEntry& entry) { accept_(configuration.generation, entry); });
+                        file.tracker.consume(line, [&](const quota::RequestEntry& entry) { auto value=entry;if(value.threadId.empty())value.threadId=quota::request_detail::ThreadFromFile(path);accept_(configuration.generation, value); });
                     });
                 }
             };
@@ -521,7 +522,10 @@ Engine::~Engine() { stop(); }
 Preferences Engine::preferences() { std::lock_guard<std::mutex> lock(mutex_); return preferences_; }
 State Engine::state() { std::lock_guard<std::mutex> lock(mutex_); return state_; }
 quota::HistoryReadResult Engine::history(size_t maxRows) { return history_.read(maxRows); }
-quota::RequestReadResult Engine::requests(size_t maxRows) { return requests_.read(maxRows); }
+quota::RequestReadResult Engine::requests(size_t maxRows) {
+    std::string home;{std::lock_guard<std::mutex> lock(mutex_);home=preferences_.home;}
+    auto rows=requests_.read(maxRows);quota::ResolveRequestConversations(std::filesystem::u8path(home),rows.entries);return rows;
+}
 void Engine::configure(Preferences value) {
     if (!Valid(value)) return;
     bool homeChanged, sessionsChanged, recording; unsigned sessionGeneration; std::string currentHome;

@@ -6,6 +6,7 @@
 #include "Localization.h"
 #include "QuotaHistory.h"
 #include "RequestUsage.h"
+#include "ConversationNames.h"
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -630,7 +631,8 @@ std::wstring RequestQuota(const quota::Window& before,const quota::Window& after
 }
 std::vector<std::wstring> RequestCells(const quota::RequestEntry& entry){
     const auto& counts=entry.tokens;
-    return {LocalTime(entry.ended?entry.ended:entry.started),RequestText(entry.model),RequestStatus(entry),counts?std::to_wstring(counts->total):L"—",
+    const auto& conversation=entry.conversationLabel.empty()?entry.threadId:entry.conversationLabel;
+    return {LocalTime(entry.ended?entry.ended:entry.started),conversation.empty()?Ui(L"未识别对话"):RequestText(conversation),RequestText(entry.model),RequestStatus(entry),counts?std::to_wstring(counts->total):L"—",
         counts?std::to_wstring(counts->input)+L" / "+std::to_wstring(counts->cachedInput)+L" / "+std::to_wstring(counts->cacheWriteInput):L"—",
         counts?std::to_wstring(counts->output)+L" / "+std::to_wstring(counts->reasoningOutput):L"—",
         RequestQuota(entry.quotaStart.fiveHour,entry.quotaEnd.fiveHour,entry.fiveChange)+L" / "+RequestQuota(entry.quotaStart.weekly,entry.quotaEnd.weekly,entry.weeklyChange),L"—",RequestText(entry.threadId)+L" / "+RequestText(entry.turnId)};
@@ -638,7 +640,7 @@ std::vector<std::wstring> RequestCells(const quota::RequestEntry& entry){
 void HistoryColumns(){
     if(!historyWindow)return;HWND list=GetDlgItem(historyWindow,401);while(ListView_DeleteColumn(list,0)){}
     const wchar_t* quotaLabels[]{L"时间",L"5h 剩余 / 变化",L"周剩余 / 变化",L"来源 / 事件"};
-    const wchar_t* requestLabels[]{L"时间",L"模型",L"状态",L"实际 Token",L"输入 / 缓存命中 / 缓存写入",L"输出 / 推理",L"账户快照变化 5h / 周",L"实际金额",L"会话 / 请求"};
+    const wchar_t* requestLabels[]{L"时间",L"所属对话",L"模型",L"状态",L"实际 Token",L"输入 / 缓存命中 / 缓存写入",L"输出 / 推理",L"账户快照变化 5h / 周",L"实际金额",L"会话 / 请求"};
     int count=historyRequests?static_cast<int>(std::size(requestLabels)):static_cast<int>(std::size(quotaLabels));
     for(int column=0;column<count;++column){LVCOLUMNW value{};value.mask=LVCF_TEXT|LVCF_WIDTH;value.cx=historyTheme.px(180);value.pszText=const_cast<wchar_t*>(Ui(historyRequests?requestLabels[column]:quotaLabels[column]));SendMessageW(list,LVM_INSERTCOLUMNW,column,reinterpret_cast<LPARAM>(&value));}
 }
@@ -666,7 +668,7 @@ void PopulateHistory(){
     SetWindowTextW(GetDlgItem(historyWindow,408),explanation.c_str());
     InvalidateRect(GetDlgItem(historyWindow,405),nullptr,FALSE);
 }
-void RefreshHistory(){if(historyRequests)requestRows=requestStore.read();else historyRows=historyStore.read();PopulateHistory();}
+void RefreshHistory(){if(historyRequests){requestRows=requestStore.read();quota::ResolveRequestConversations(std::filesystem::path(home),requestRows.entries);}else historyRows=historyStore.read();PopulateHistory();}
 void TranslateHistory(){
     if(!historyWindow)return;
     SetWindowTextW(historyWindow,Ui(historyRequests?L"Codex 配额 — 工作请求":L"Codex 配额 — 额度变化"));
@@ -688,8 +690,8 @@ void LayoutHistory(HWND h){
     move(408,margin,bounds.bottom-historyTheme.px(110),bounds.right-2*margin,historyTheme.px(58));
     move(404,margin,bounds.bottom-historyTheme.px(50),bounds.right-2*margin,historyTheme.px(40));
     int available=std::max<int>(historyTheme.px(720),bounds.right-2*margin-GetSystemMetrics(SM_CXVSCROLL)-4);
-    const int widths[]{174,140,150,100,242,174,440,110,300};
-    for(int column=0;column<(historyRequests?9:4);++column)ListView_SetColumnWidth(GetDlgItem(h,401),column,historyRequests?historyTheme.px(widths[column]):available*(column==0?24:column==3?22:27)/100);
+    const int widths[]{174,260,140,150,100,242,174,440,110,300};
+    for(int column=0;column<(historyRequests?10:4);++column)ListView_SetColumnWidth(GetDlgItem(h,401),column,historyRequests?historyTheme.px(widths[column]):available*(column==0?24:column==3?22:27)/100);
 }
 void PaintRequestChart(HWND h,HDC target){
     RECT bounds{};GetClientRect(h,&bounds);if(bounds.right<=0||bounds.bottom<=0)return;
@@ -760,7 +762,7 @@ LRESULT CALLBACK HistoryProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
         historyTheme.create(GetDpiForWindow(h));
         auto control=[&](const wchar_t* type,const wchar_t* title,DWORD style,int id){return CreateWindowExW(0,type,title,WS_CHILD|WS_VISIBLE|style,0,0,100,40,h,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);};
         HWND list=control(WC_LISTVIEWW,L"",LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP,401);
-        ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
+        ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_LABELTIP);
         ListView_SetBkColor(list,quota_ui::Background);ListView_SetTextBkColor(list,quota_ui::Background);ListView_SetTextColor(list,quota_ui::Text);
         SetWindowTheme(list,L"DarkMode_Explorer",nullptr);
         control(L"BUTTON",Ui(L"图表"),BS_OWNERDRAW|WS_TABSTOP,402);control(L"BUTTON",Ui(L"刷新记录"),BS_OWNERDRAW|WS_TABSTOP,403);

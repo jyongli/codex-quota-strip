@@ -49,6 +49,7 @@ inline const wchar_t* Translate(const wchar_t* chinese, bool english) {
         ,{L"条记录",L"entries"},{L"账户",L"Account"},{L"本地事件",L"Local event"},{L"基线",L"Baseline"},{L"变化",L"Change"},{L"重置",L"Reset"}
         ,{L"百分点",L"pp"},{L"已暂停记录，现有记录仍可查看",L"Recording paused; existing history is available"}
         ,{L"工作请求",L"Work requests"},{L"查看工作请求",L"View work requests"},{L"工作请求…",L"Work requests…"}
+        ,{L"所属对话",L"Conversation"},{L"未识别对话",L"Unknown conversation"}
         ,{L"记录额度与工作请求",L"Record quota changes and work requests"}
         ,{L"无法读取工作请求，请检查日志目录和权限。",L"Cannot read work requests; check directory and permissions."}
         ,{L"无法记录工作请求，请检查日志目录和权限。",L"Cannot write work requests; check directory and permissions."}

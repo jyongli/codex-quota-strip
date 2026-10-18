@@ -72,16 +72,21 @@ void CheckWorkRequests(const std::filesystem::path& executable){
         BOOL created=CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process);SetEnvironmentVariableW(L"LOCALAPPDATA",previous);Check(created!=FALSE,"Request fixture must start");target.pid=process.dwProcessId;
         Check(Wait([&]{EnumWindows(Find,reinterpret_cast<LPARAM>(&target));return target.control&&State(status).get("watching").num==1;}),"Request fixture must watch synthetic rollout files");
         SendMessageW(target.control,WM_COMMAND,9,0);EnumWindows(Find,reinterpret_cast<LPARAM>(&target));Check(target.history&&SendMessageW(GetDlgItem(target.history,407),CB_GETCURSEL,0,0)==1,"Request tray entry must open the work-request page");
-        HWND list=GetDlgItem(target.history,401);Check(SendMessageW(ListView_GetHeader(list),HDM_GETITEMCOUNT,0,0)==9,"Request list must expose model/status/token breakdown/account snapshot/amount columns");
+        HWND list=GetDlgItem(target.history,401);Check(SendMessageW(ListView_GetHeader(list),HDM_GETITEMCOUNT,0,0)==10,"Request list must expose a visible conversation column alongside model/status/token/account/amount columns");
         Check(Caption(GetDlgItem(target.history,408)).find(L"not attributed")!=std::wstring::npos,"Account-wide quota changes must not be presented as request consumption");
         quota::RequestStore store;store.configure(false,settings.parent_path()/L"history");auto stamp=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        {std::ofstream out(root/L"session_index.jsonl");out<<"{\"id\":\"thread-turn-one\",\"thread_name\":\"Source conversation\",\"updated_at\":\"2026-10-18T01:00:00Z\"}\n";}
         RolloutRequest(sessions/L"one.jsonl",stamp,"turn-one");Check(Wait([&]{return store.read().entries.size()==1;}),"A completed real rollout request must be persisted by the native watcher");
         Check(SendMessageW(list,LVM_GETITEMCOUNT,0,0)==0,"Open request view must not poll after a completed request");SendMessageW(target.history,WM_COMMAND,403,0);
-        Check(ListCell(list,0,1)==L"synthetic-model"&&ListCell(list,0,2)==L"Completed","Request model and completion status must come from rollout metadata");
-        Check(ListCell(list,0,3)==L"170"&&ListCell(list,0,4)==L"120 / 40 / 6"&&ListCell(list,0,5)==L"50 / 10","Multiple responses must aggregate actual token deltas without double counting cached or reasoning tokens");
-        Check(ListCell(list,0,6)==L"80% → 76% (-4.0 pp) / 60% → 57% (-3.0 pp)"&&ListCell(list,0,7)==L"—","Account snapshot before/after values must accompany deltas, while absent money remains an em dash");
+        Check(ListCell(list,0,1)==L"Source conversation","Conversation title must appear beside time without scrolling to the raw IDs");
+        Check(ListCell(list,0,2)==L"synthetic-model"&&ListCell(list,0,3)==L"Completed","Request model and completion status must come from rollout metadata");
+        Check(ListCell(list,0,4)==L"170"&&ListCell(list,0,5)==L"120 / 40 / 6"&&ListCell(list,0,6)==L"50 / 10","Multiple responses must aggregate actual token deltas without double counting cached or reasoning tokens");
+        Check(ListCell(list,0,7)==L"80% → 76% (-4.0 pp) / 60% → 57% (-3.0 pp)"&&ListCell(list,0,8)==L"—","Account snapshot before/after values must accompany deltas, while absent money remains an em dash");
+        {std::ofstream out(root/L"session_index.jsonl",std::ios::app);out<<"{\"id\":\"thread-turn-one\",\"thread_name\":\"\\u5bf9\\u8bdd Renamed\"}\n";}
+        SendMessageW(target.history,WM_COMMAND,403,0);Check(ListCell(list,0,1)==L"对话 Renamed"&&ListCell(list,0,9)==L"thread-turn-one / turn-one","Refresh must pick up renamed Unicode titles and preserve raw identities");
         RolloutRequest(sessions/L"unknown.jsonl",stamp+20,"turn-unknown",false);Check(Wait([&]{return store.read().entries.size()==2;}),"A request without token metadata must remain visible");SendMessageW(target.history,WM_COMMAND,403,0);
-        Check(ListCell(list,0,3)==L"—"&&ListCell(list,0,4)==L"—"&&ListCell(list,0,5)==L"—"&&ListCell(list,0,7)==L"—","Unavailable token counts and actual money must not be fabricated");
+        Check(ListCell(list,0,1)==L"thread-turn-unknown","Missing title must fall back to the actual thread ID");
+        Check(ListCell(list,0,4)==L"—"&&ListCell(list,0,5)==L"—"&&ListCell(list,0,6)==L"—"&&ListCell(list,0,8)==L"—","Unavailable token counts and actual money must not be fabricated");
         RolloutRequest(sessions/L"three.jsonl",stamp+40,"turn-three");Check(Wait([&]{return store.read().entries.size()==3;}),"A second measured request must persist");SendMessageW(target.history,WM_COMMAND,403,0);SendMessageW(target.history,WM_COMMAND,402,0);CheckRequestChart(GetDlgItem(target.history,405));
         // 已开始的请求跨越账号边界时不能归给新账号，重放旧开头也不得复活它。
         auto boundary=sessions/L"boundary.jsonl";
@@ -96,7 +101,8 @@ void CheckWorkRequests(const std::filesystem::path& executable){
         auto tailStamp=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()+10;
         {std::ofstream tail(sessions/L"end-only.jsonl");tail<<"{\"timestamp\":\""<<Iso(tailStamp)<<"\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn-tail-only\"}}\n";}
         Check(Wait([&]{return store.read().entries.size()==4;}),"Known completion with an unavailable beginning must remain visible after the auth boundary");SendMessageW(target.history,WM_COMMAND,403,0);
-        Check(ListCell(list,0,2).find(L"Partial")!=std::wstring::npos&&ListCell(list,0,3)==L"—"&&ListCell(list,0,6)==L"— / —"&&ListCell(list,0,7)==L"—","Unknown-start request must not inherit token, quota or money values");
+        Check(ListCell(list,0,3).find(L"Partial")!=std::wstring::npos&&ListCell(list,0,4)==L"—"&&ListCell(list,0,7)==L"— / —"&&ListCell(list,0,8)==L"—","Unknown-start request must not inherit token, quota or money values");
+        Check(ListCell(list,0,1)==L"Unknown conversation", "Unrecoverable source must be labelled instead of guessed");
         SendMessageW(target.control,WM_COMMAND,7,0);EnumWindows(Find,reinterpret_cast<LPARAM>(&target));Check(GetDlgItem(target.settings,306)!=nullptr,"Settings must link directly to work requests");
         SendMessageW(GetDlgItem(target.settings,208),CB_SETCURSEL,0,0);SendMessageW(target.settings,WM_COMMAND,302,0);Check(Caption(target.history)==L"Codex 配额 — 工作请求","Open request view must translate live with settings");
         SendMessageW(target.settings,WM_COMMAND,305,0);Check(SendMessageW(GetDlgItem(target.history,407),CB_GETCURSEL,0,0)==0,"Existing quota history must remain accessible");SendMessageW(target.settings,WM_COMMAND,306,0);Check(SendMessageW(GetDlgItem(target.history,407),CB_GETCURSEL,0,0)==1,"Settings request link must select work requests");

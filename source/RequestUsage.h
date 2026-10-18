@@ -13,6 +13,8 @@ struct TokenCounts {
 };
 struct RequestEntry {
     std::string threadId, turnId, model, status;
+    // 仅列表快照使用；标题不写进每日 CSV，也不参与请求去重。
+    std::string conversationLabel;
     long long started = 0, ended = 0;
     bool partial = false;
     std::optional<TokenCounts> tokens;
@@ -60,10 +62,11 @@ class MetadataLines {
     bool skipString_ = false, skipEscaped_ = false;
     int skipDepth_ = 0;
     std::string key_;
+    bool skipSessionContent_ = false;
     void append(char c) { if (pending_.size() >= 32768) { pending_.clear(); discard_ = true; } else pending_ += c; }
     void lexicalReset() { inString_ = escaped_ = candidate_ = waiting_ = skipping_ = skipString_ = skipEscaped_ = false; skipDepth_ = 0; key_.clear(); }
 public:
-    explicit MetadataLines(bool skipPartial = false) : discard_(skipPartial) {}
+    explicit MetadataLines(bool skipPartial = false, bool skipSessionContent = false) : discard_(skipPartial), skipSessionContent_(skipSessionContent) {}
     void reset(bool skipPartial = false) { pending_.clear(); discard_ = skipPartial; lexicalReset(); }
     template<class F> void feed(const char* bytes, size_t length, F accept) {
         for (size_t i = 0; i < length; ++i) {
@@ -96,7 +99,7 @@ public:
             if (inString_) {
                 if (escaped_) { escaped_ = false; key_.clear(); }
                 else if (c == '\\') { escaped_ = true; key_.clear(); }
-                else if (c == '"') { inString_ = false; candidate_ = key_ == "last_agent_message"; }
+                else if (c == '"') { inString_ = false; candidate_ = key_ == "last_agent_message" || (skipSessionContent_ && (key_ == "base_instructions" || key_ == "dynamic_tools" || key_ == "history_base")); }
                 else if (key_.size() <= 64) key_ += c;
             } else if (c == '"') { inString_ = true; key_.clear(); candidate_ = false; }
             else if (candidate_) {
@@ -109,6 +112,14 @@ public:
 
 namespace request_detail {
 constexpr long long MaxTokens = 9007199254740991LL;
+// rollout 文件名保留会话 UUID；尾读跳过 session_meta 时仍能确定请求所属会话。
+inline std::string ThreadFromFile(const std::filesystem::path& path) {
+    auto name=path.filename().u8string();
+    if(name.compare(0,8,"rollout-")!=0||name.size()<51||name.compare(name.size()-6,6,".jsonl")!=0)return {};
+    auto at=name.size()-42;if(name[at-1]!='-')return {};auto id=name.substr(at,36);
+    for(size_t i=0;i<id.size();++i){char& c=id[i];if(i==8||i==13||i==18||i==23){if(c!='-')return {};}else{if(c>='A'&&c<='F')c=static_cast<char>(c-'A'+'a');if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')))return {};}}
+    return id;
+}
 inline bool Label(const std::string& value) {
     if (value.size() > 160) return false;
     for (unsigned char c : value) if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == ':' || c == '/')) return false;

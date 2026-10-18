@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 工作请求新增前置“所属对话”列：本地标题、子代理父对话、ID／未知回退及重命名刷新；标题不写入 CSV。尾读通过 rollout 文件名保留会话 ID，旧记录通过有界只读历史 ID 索引补认，重复来源保持未知。 / Add a leading Conversation column with local titles, subagent parents, ID/unknown fallbacks and rename refresh without CSV title storage. Preserve source UUIDs from rollout filenames and resolve legacy rows through a bounded read-only history ID index, retaining unknown values on conflicts.
 - 修复 Windows 商店包缓存路径被误识别为 Codex 主程序、导致配额条附着到插件配置／历史窗口的问题；排除自身进程并核对主程序文件名。 / Prevent Windows Store cache paths from misidentifying companion settings/history as Codex; exclude the companion process and verify the host executable name.
 - 三平台额度图连接有效点：连续变化使用实线，基线／来源／重置边界使用虚线参考连接并显示说明；缺失值保持断线。 / Connect valid quota points on all platforms using solid continuous segments and labelled dashed baseline/source/reset references, preserving missing-value gaps.
 - 修复从 Codex 切回已打开的配置／历史窗口时配额条未及时隐藏、遮挡输入的问题；复用前台事件，不新增轮询。 / Hide the quota strip immediately when returning to existing settings/history windows, preventing obstructed input without adding polling.

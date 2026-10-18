@@ -30,6 +30,10 @@ The development branch records daily quota CSV files in the selected directory. 
 
 Request-usage CSV additionally contains thread/request identifiers, model, timestamps, status and numeric token counts. Identifiers can correlate local sessions; redact them before sharing. Account IDs, prompts, responses, tool content, authentication tokens and proxy addresses are excluded. Unknown actual amounts stay empty; account quota changes are not per-request charges.
 
+工作请求列表按需读取所选 Codex 目录下的标题索引及有界会话头元数据；旧记录归属使用本地历史数据库的只读 ID 覆盖索引查询，不查询消息正文表。标题和代理名称仅用于内存显示，不追加到额度／请求 CSV，不上传。系统 SQLite 不可用或数据不明确时保留未知来源。
+
+The request viewer reads the selected Codex directory's title index and bounded session headers on demand. Legacy attribution queries only the read-only local history ID covering index, without reading message-content tables. Titles and agent names remain in memory, are excluded from quota/request CSV files and are not uploaded. Missing system SQLite or ambiguous metadata leaves sources unknown.
+
 ## 构建产物 / Build artifacts
 
 账号查询会从所选 Codex `config.toml` 解析代理，只将四项代理变量注入查询子进程；不会注入其他配置密钥。配置错误提示不回显代理 URL／密码，配置和代理凭据不写入公开构建信息。 / Queries parse proxies from the selected Codex config.toml and inject only the four proxy variables into the child, excluding other configured secrets. Errors do not echo proxy URLs/passwords; configurations and proxy credentials are excluded from public build information.

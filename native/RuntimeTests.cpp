@@ -95,6 +95,7 @@ int main(int argc, char** argv) {
         settings.home = (root / "request-home").string(); settings.historyDirectory = (root / "request-history").string(); settings.online = false;
         std::filesystem::create_directories(settings.home);
         { std::ofstream auth(std::filesystem::path(settings.home) / "auth.json"); auth << "request-account-a"; }
+        { std::ofstream title(std::filesystem::path(settings.home) / "session_index.jsonl"); title << "{\"id\":\"runtime-thread\",\"thread_name\":\"Runtime conversation\"}\n"; }
         std::atomic<int> requestNotifications{0}; nativequota::Engine listener(settings); listener.start([&] { ++requestNotifications; });
         auto sessions = std::filesystem::path(settings.home) / "sessions/2099/01/01"; std::filesystem::create_directories(sessions);
         auto session = sessions / "rollout-runtime.jsonl";
@@ -105,6 +106,7 @@ int main(int argc, char** argv) {
         require(requests.entries.size() == 1 && requests.entries[0].turnId == "runtime-turn" && requests.entries[0].tokens && requests.entries[0].tokens->input == 100 && requests.entries[0].tokens->total == 130,
             "Native event-driven session follower must record real request tokens with online queries disabled");
         require(listener.state().snapshot.observed == 0, "Session logging must not launch an account query");
+        require(requests.entries[0].conversationLabel=="Runtime conversation", "Native request snapshots must resolve the source conversation title on demand");
         std::this_thread::sleep_for(std::chrono::milliseconds(30)); auto notificationsBeforeHomeWrites = requestNotifications.load();
         for (int index = 0; index < 64; ++index) { std::ofstream unrelated(std::filesystem::path(settings.home) / "state.sqlite-wal", std::ios::app); unrelated << "synthetic unrelated state\n"; }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -145,6 +147,12 @@ int main(int argc, char** argv) {
         while (!hasTurn("large-final-reply") && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         auto largeRows = listener.requests(); auto largeRow = std::find_if(largeRows.entries.begin(), largeRows.entries.end(), [](const auto& row) { return row.turnId == "large-final-reply"; });
         require(largeRow != largeRows.entries.end() && largeRow->tokens && largeRow->tokens->total == 130 && !largeRow->partial, "Native listener must retain complete token counts across a 400KiB final-response append");
+        auto namedFile=sessions/"rollout-2099-01-01T00-00-00-01234567-89ab-7cde-8fab-0123456789ab.jsonl";
+        auto tailFixture=requestFixture("filename-source",nativequota::NowMs()+10);tailFixture.erase(0,tailFixture.find('\n')+1);
+        {std::ofstream out(namedFile);out<<std::string(400*1024,'x')<<'\n'<<tailFixture;}
+        deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);while(!hasTurn("filename-source")&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        auto namedRows=listener.requests();auto namedRow=std::find_if(namedRows.entries.begin(),namedRows.entries.end(),[](const auto& row){return row.turnId=="filename-source";});
+        require(namedRow!=namedRows.entries.end()&&namedRow->threadId=="01234567-89ab-7cde-8fab-0123456789ab", "Native bounded tails must preserve the source thread UUID even when session_meta is unavailable");
         const auto recordedBeforeDisable = listener.requests().entries.size();
         settings.historyEnabled = false; listener.configure(settings);
         { std::ofstream out(session, std::ios::app); out << requestFixture("disabled-turn", nativequota::NowMs() + 10); }

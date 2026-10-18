@@ -16,7 +16,7 @@ struct Snapshot { Window fiveHour, weekly; long long observed = 0; };
 // 已确认账号只提供周窗口才收起 5 小时区；未知、失败和已知窗口过期不推断账号类型。
 inline bool WeeklyOnly(const Snapshot& snapshot) { return snapshot.observed > 0 && snapshot.weekly.present && !snapshot.fiveHour.present; }
 
-// Only small, genuine quota events enter this parser. Conversation text is never parsed.
+// 只解析有界的额度／请求元数据和标题索引；不把对话正文当成事件或标题。
 struct Json {
     enum Kind { Null, Object, Array, String, Number, Boolean } kind = Null;
     std::map<std::string, Json> members;
@@ -54,13 +54,15 @@ class JsonParser {
             case 'b': out += '\b'; break; case 'f': out += '\f'; break;
             case 'n': out += '\n'; break; case 'r': out += '\r'; break; case 't': out += '\t'; break;
             case 'u': {
-                unsigned code = 0;
-                for (int i = 0; i < 4; ++i) {
-                    char h = take(); int v = h >= '0' && h <= '9' ? h - '0' : h >= 'a' && h <= 'f' ? h - 'a' + 10 : h >= 'A' && h <= 'F' ? h - 'A' + 10 : -1;
-                    if (v < 0) fail(); code = (code << 4) | v;
-                }
-                // Quota keys are ASCII. Non-ASCII labels are not used by the display.
-                out += code < 128 ? static_cast<char>(code) : '?';
+                auto hex = [&] { unsigned code=0;for(int i=0;i<4;++i){char h=take();int v=h>='0'&&h<='9'?h-'0':h>='a'&&h<='f'?h-'a'+10:h>='A'&&h<='F'?h-'A'+10:-1;if(v<0)fail();code=(code<<4)|v;}return code; };
+                unsigned code=hex();
+                // 标题索引可能转义中文和 emoji；合并合法代理对，再输出 UTF-8。
+                if(code>=0xd800&&code<=0xdbff){if(take()!='\\'||take()!='u')fail();unsigned low=hex();if(low<0xdc00||low>0xdfff)fail();code=0x10000+((code-0xd800)<<10)+(low-0xdc00);}
+                else if(code>=0xdc00&&code<=0xdfff)fail();
+                if(code<0x80)out+=static_cast<char>(code);
+                else if(code<0x800){out+=static_cast<char>(0xc0|(code>>6));out+=static_cast<char>(0x80|(code&63));}
+                else if(code<0x10000){out+=static_cast<char>(0xe0|(code>>12));out+=static_cast<char>(0x80|((code>>6)&63));out+=static_cast<char>(0x80|(code&63));}
+                else{out+=static_cast<char>(0xf0|(code>>18));out+=static_cast<char>(0x80|((code>>12)&63));out+=static_cast<char>(0x80|((code>>6)&63));out+=static_cast<char>(0x80|(code&63));}
                 break;
             }
             default: fail();

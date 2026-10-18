@@ -219,16 +219,27 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
         historyMode.selectedSegment = 0; [self switchHistory:nil]; passed = passed && historyChart.hidden && !historyScroll.hidden;
         [historyKind selectItemAtIndex:1]; [self refreshHistory:nil]; passed = passed && historyTable.numberOfRows == 0;
         quota::RequestEntry request; request.turnId = "smoke-turn"; request.ended = NowMs(); request.tokens = quota::TokenCounts{100, 20, 0, 30, 5, 130}; request.status = "completed";
-        auto unknown = request; unknown.turnId = "unknown-turn"; unknown.ended += 10; unknown.tokens.reset(); unknown.partial = true;
-        requestRows.entries = {request, unknown}; [self renderHistory];
-        passed = passed && historyTable.numberOfRows == 2 && [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[12] row:0] isEqualToString:@"—"] &&
-            [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[2] row:0] isEqualToString:@"—"];
+        request.threadId = "smoke-source-thread"; request.conversationLabel = "配额工具 · Smoke conversation " + std::string(600, 'x');
+        auto fallback = request; fallback.turnId = "fallback-turn"; fallback.threadId = "smoke-fallback-thread"; fallback.conversationLabel.clear(); fallback.ended += 5;
+        auto unknown = request; unknown.turnId = "unknown-turn"; unknown.threadId.clear(); unknown.conversationLabel.clear(); unknown.ended += 10; unknown.tokens.reset(); unknown.partial = true;
+        requestRows.entries = {request, fallback, unknown}; [self renderHistory];
+        passed = passed && historyTable.numberOfRows == 3 && [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[13] row:0] isEqualToString:@"—"] &&
+            [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[3] row:0] isEqualToString:@"—"];
+        // 直接读取真实表格单元格，确保显示标题时仍保留末列的原始标识。
+        passed = passed && [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[1] row:0] isEqualToString:@"Unknown conversation"] &&
+            [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[1] row:1] isEqualToString:Text(fallback.threadId)] &&
+            [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[1] row:2] isEqualToString:Text(request.conversationLabel)] &&
+            [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[15] row:2] isEqualToString:@"smoke-source-thread / smoke-turn"] && historyTable.tableColumns[1].width >= 120 && historyTable.tableColumns[1].maxWidth <= 420;
+        auto languagePrefs = engine->preferences(); languagePrefs.chinese = true; engine->configure(languagePrefs); [self renderHistory];
+        passed = passed && [[self tableView:historyTable objectValueForTableColumn:historyTable.tableColumns[1] row:0] isEqualToString:@"未知对话"] && [historyTable.tableColumns[1].title isEqualToString:@"所属对话"];
+        languagePrefs.chinese = false; engine->configure(languagePrefs); [self renderHistory];
         historyMode.selectedSegment = 1; [self switchHistory:nil]; [historyChart display]; passed = passed && !historyChart.hidden; [historyWindow close];
         [strip orderOut:nil]; self.smokePassed = passed && !strip.isVisible;
         std::cout << (self.smokePassed ? "PASS: macOS menu bar, native settings persistence, passive overlay and hide lifecycle\n" : "FAIL: macOS native UI smoke test\n");
         if (self.smokePassed) std::cout << "PASS: macOS isolated history directory persistence, empty/list/chart states and synthetic drawing\n";
         if (self.smokePassed) std::cout << "PASS: macOS disabled history avoids directory probes; scrollable settings keep Save reachable\n";
         if (self.smokePassed) std::cout << "PASS: macOS request selector, token list/chart and unknown actual cost\n";
+        if (self.smokePassed) std::cout << "PASS: macOS conversation title, ID/unknown fallbacks, localization and bounded column width\n";
         [config close];
         rusage before{}; getrusage(RUSAGE_SELF, &before);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -379,13 +390,16 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
         NSString* status = [self ui:row.status == "completed" ? @"Completed" : row.status == "interrupted" ? @"Interrupted" : row.status == "incomplete" ? @"Incomplete" : Text(row.status)];
         if (row.partial) status = [status stringByAppendingFormat:@" / %@", [self ui:@"Partial"]];
         switch (column.identifier.integerValue) {
-            case 0: return HistoryTime(row.ended); case 1: return row.model.empty() ? @"—" : Text(row.model);
-            case 2: return count(&quota::TokenCounts::input); case 3: return count(&quota::TokenCounts::cachedInput); case 4: return count(&quota::TokenCounts::cacheWriteInput);
-            case 5: return count(&quota::TokenCounts::output); case 6: return count(&quota::TokenCounts::reasoningOutput); case 7: return count(&quota::TokenCounts::total);
-            case 8: return [NSString stringWithFormat:@"%@ → %@", HistoryPercent(row.quotaStart.fiveHour), HistoryPercent(row.quotaEnd.fiveHour)];
-            case 9: return [NSString stringWithFormat:@"%@ → %@", HistoryPercent(row.quotaStart.weekly), HistoryPercent(row.quotaEnd.weekly)];
-            case 10: return HistoryDelta(row.fiveChange); case 11: return HistoryDelta(row.weeklyChange); case 12: return @"—";
-            case 13: return status;
+            case 0: return HistoryTime(row.ended);
+            // 标题不写回日志；显示时保留 ID 回退，未知对话沿用当前界面语言。
+            case 1: return !row.conversationLabel.empty() ? Text(row.conversationLabel) : !row.threadId.empty() ? Text(row.threadId) : [self ui:@"Unknown conversation"];
+            case 2: return row.model.empty() ? @"—" : Text(row.model);
+            case 3: return count(&quota::TokenCounts::input); case 4: return count(&quota::TokenCounts::cachedInput); case 5: return count(&quota::TokenCounts::cacheWriteInput);
+            case 6: return count(&quota::TokenCounts::output); case 7: return count(&quota::TokenCounts::reasoningOutput); case 8: return count(&quota::TokenCounts::total);
+            case 9: return [NSString stringWithFormat:@"%@ → %@", HistoryPercent(row.quotaStart.fiveHour), HistoryPercent(row.quotaEnd.fiveHour)];
+            case 10: return [NSString stringWithFormat:@"%@ → %@", HistoryPercent(row.quotaStart.weekly), HistoryPercent(row.quotaEnd.weekly)];
+            case 11: return HistoryDelta(row.fiveChange); case 12: return HistoryDelta(row.weeklyChange); case 13: return @"—";
+            case 14: return status;
             default: return [NSString stringWithFormat:@"%@ / %@", row.threadId.empty() ? @"—" : Text(row.threadId), Text(row.turnId)];
         }
     }
@@ -405,11 +419,16 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     auto prefs = engine->preferences(); historyChart->rows = historyRows.entries; historyChart->chinese = prefs.chinese;
     historyChart->requests = requestRows.entries; historyChart->requestMode = [self showingRequests];
     for (NSTableColumn* column in [historyTable.tableColumns copy]) [historyTable removeTableColumn:column];
-    NSArray* headings = [self showingRequests] ? @[@"Time (local)", @"Model", @"Input tokens", @"Cached input tokens", @"Cache write tokens", @"Output tokens", @"Reasoning tokens", @"Total tokens", @"5h quota (start → end)", @"Weekly quota (start → end)", @"5h account change (pp)", @"Weekly account change (pp)", @"Actual cost", @"Status", @"Thread / turn"] :
+    NSArray* headings = [self showingRequests] ? @[@"Time (local)", @"Conversation", @"Model", @"Input tokens", @"Cached input tokens", @"Cache write tokens", @"Output tokens", @"Reasoning tokens", @"Total tokens", @"5h quota (start → end)", @"Weekly quota (start → end)", @"5h account change (pp)", @"Weekly account change (pp)", @"Actual cost", @"Status", @"Thread / turn"] :
         @[@"Time (local)", @"5h remaining", @"Weekly remaining", @"5h change (pp)", @"Weekly change (pp)", @"Source / event"];
     for (NSUInteger index = 0; index < headings.count; ++index) {
         auto column = [[NSTableColumn alloc] initWithIdentifier:[NSString stringWithFormat:@"%lu", static_cast<unsigned long>(index)]];
         column.title = [self ui:headings[index]]; column.width = index == 0 ? 175 : 150; column.minWidth = 90; column.editable = NO; [historyTable addTableColumn:column];
+        if ([self showingRequests] && index == 1) {
+            // 对话列单行截断并限制最大宽度，长标题不会挤走其余额度和 token 列。
+            column.minWidth = 120; column.maxWidth = 420; column.width = 260;
+            NSTextFieldCell* cell = (NSTextFieldCell*)column.dataCell; cell.usesSingleLineMode = YES; cell.lineBreakMode = NSLineBreakByTruncatingTail;
+        }
     }
     [historyTable reloadData]; historyChart.needsDisplay = YES;
     NSMutableString* message = [[self ui:@"Latest 30 UTC days; at most 2000 records. Refresh manually."] mutableCopy];

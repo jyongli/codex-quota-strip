@@ -9,6 +9,7 @@ inline const char* Translate(const char* english, bool chinese) {
     static const Entry entries[] = {
         {"Quota history…","额度变化…"},{"Codex Quota — History","Codex 配额 — 变化历史"},
         {"Quota changes","额度变化"},{"Work requests","工作请求"},{"Record quota changes and request tokens","记录额度变化与请求 token"},
+        {"Conversation","所属对话"},{"Unknown conversation","未知对话"},
         {"Model","模型"},{"Input tokens","输入 token"},{"Cached input tokens","缓存读取 token"},{"Cache write tokens","缓存写入 token"},
         {"Output tokens","输出 token"},{"Reasoning tokens","推理 token"},{"Total tokens","总 token"},
         {"5h quota (start → end)","5 小时额度（开始 → 结束）"},{"Weekly quota (start → end)","周额度（开始 → 结束）"},
