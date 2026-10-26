@@ -43,6 +43,7 @@ struct App {
     int iconGeneration = 0, testStage = 0;
     ::Window testHost = 0, testOther = 0;
     std::string lastSummary;
+    bool applicationIconLoaded = false;
     explicit App(Options value) : options(std::move(value)), engine(options.preferences) {
         configRoot = options.smoke ? std::filesystem::temp_directory_path() / ("quota-linux-smoke-" + std::to_string(getpid())) : ConfigDirectory();
         // 测试始终使用隔离目录，构造 Engine 后、启动查询前覆盖默认日志路径。
@@ -73,7 +74,23 @@ struct App {
         }
         gtk_widget_show_all(menu); return menu;
     }
+    // 开发构建、私有 TGZ 安装和系统包分别从可执行文件旁或 prefix/share 读取同一品牌 PNG。
+    bool loadApplicationIcon() {
+        gtk_window_set_default_icon_name("codex-quota-strip");
+        char executable[4096]; auto length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
+        if (length <= 0) return false; executable[length] = '\0';
+        auto directory = std::filesystem::path(executable).parent_path();
+        for (const auto& path : {directory / "app.png", directory / "resources/app.png", directory.parent_path() / "share/icons/hicolor/256x256/apps/codex-quota-strip.png"}) {
+            GError* error = nullptr; auto icon = gdk_pixbuf_new_from_file(path.c_str(), &error);
+            if (error) g_error_free(error);
+            if (!icon) continue;
+            gtk_window_set_default_icon(icon); g_object_unref(icon); return true;
+        }
+        return false;
+    }
     void initialize() {
+        applicationIconLoaded = loadApplicationIcon();
+        if (options.smoke && !applicationIconLoaded) throw std::runtime_error("Packaged application PNG icon is missing or unreadable");
         strip = gtk_window_new(GTK_WINDOW_TOPLEVEL);
         gtk_window_set_decorated(GTK_WINDOW(strip), FALSE); gtk_window_set_resizable(GTK_WINDOW(strip), FALSE);
         gtk_window_set_skip_taskbar_hint(GTK_WINDOW(strip), TRUE); gtk_window_set_skip_pager_hint(GTK_WINDOW(strip), TRUE);
@@ -429,6 +446,9 @@ struct App {
     void activate(::Window window) { unsigned long value = window; XChangeProperty(display, root, activeAtom, XA_WINDOW, 32, PropModeReplace, reinterpret_cast<unsigned char*>(&value), 1); XFlush(display); }
     void startSmoke() {
         if (!x11) throw std::runtime_error("Smoke test requires X11");
+        auto icons = gtk_window_get_default_icon_list(); bool hasIcon = applicationIconLoaded && icons && gdk_pixbuf_get_width(GDK_PIXBUF(icons->data)) > 0; g_list_free(icons);
+        if (!hasIcon) throw std::runtime_error("Application icon must load from the build or installed package resources");
+        std::cout << "PASS: Linux packaged brand icon is available to native windows\n";
         auto prefs = engine.preferences(); prefs.host = "QuotaFixture"; engine.configure(prefs);
         testHost = XCreateSimpleWindow(display, root, 100, 80, 800, 600, 0, 0, 0); testOther = XCreateSimpleWindow(display, root, 10, 10, 300, 300, 0, 0, 0);
         XClassHint hint{const_cast<char*>("QuotaFixture"), const_cast<char*>("QuotaFixture")}; XSetClassHint(display, testHost, &hint); XMapWindow(display, testHost); XMapWindow(display, testOther); activate(testHost);

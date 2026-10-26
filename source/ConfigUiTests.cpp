@@ -24,6 +24,7 @@ int wmain(int argc,wchar_t** argv){
         check(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&t));return t.control!=nullptr;}),"Fixture control window must exist");
         SendMessageTimeoutW(t.control,WM_COMMAND,7,0,SMTO_ABORTIFHUNG,2000,nullptr);
         check(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&t));return t.settings&&IsWindowVisible(t.settings);}),"Settings command must open a real native configuration window");
+        check(GetClassLongPtrW(t.settings,GCLP_HICON)&&GetClassLongPtrW(t.settings,GCLP_HICONSM),"Settings window must expose the custom large and small application icons");
         HWND toggle=GetDlgItem(t.settings,201);LRESULT before=SendMessageW(toggle,BM_GETCHECK,0,0);
         SendMessageW(toggle,WM_KEYDOWN,VK_SPACE,0);SendMessageW(toggle,WM_KEYUP,VK_SPACE,0);
         check(SendMessageW(toggle,BM_GETCHECK,0,0)!=before,"Styled switches must retain native Space-key behavior");SendMessageW(toggle,BM_SETCHECK,before,0);

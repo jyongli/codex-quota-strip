@@ -3,6 +3,6 @@ Type=Application
 Name=Codex Quota Strip
 Comment=Display Codex account quota in the tray and an X11 window-following overlay
 Exec=CodexQuotaStrip
-Icon=utilities-system-monitor
+Icon=codex-quota-strip
 Terminal=false
 Categories=Utility;
