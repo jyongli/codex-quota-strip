@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v3.0.0-preview.7 — 2026-10-26
+
+- 新增原创矢量应用图标，统一 Windows 程序／窗口／安装器、Linux 桌面入口和 macOS 应用包；保留独立的实时额度数字指示。 / Add original vector application artwork across Windows executables/windows/setup, Linux launchers and the macOS bundle, retaining live numeric quota indicators.
+
 ## v3.0.0-preview.6 — 2026-10-18
 
 - 工作请求新增前置“所属对话”列：本地标题、子代理父对话、ID／未知回退及重命名刷新；标题不写入 CSV。尾读通过 rollout 文件名保留会话 ID，旧记录通过有界只读历史 ID 索引补认，重复来源保持未知。 / Add a leading Conversation column with local titles, subagent parents, ID/unknown fallbacks and rename refresh without CSV title storage. Preserve source UUIDs from rollout filenames and resolve legacy rows through a bounded read-only history ID index, retaining unknown values on conflicts.

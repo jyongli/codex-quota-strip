@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '3.0.0-preview.6',
+    [string]$Version = '3.0.0-preview.7',
     [string]$PayloadDirectory = (Join-Path (Split-Path $PSScriptRoot -Parent) 'build'),
     [string]$CompilerPath
 )

@@ -5,10 +5,10 @@
   #error PayloadRoot must be supplied by Build-WindowsInstaller.ps1
 #endif
 #ifndef AppVersion
-  #define AppVersion "3.0.0-preview.6"
+  #define AppVersion "3.0.0-preview.7"
 #endif
 #ifndef NumericVersion
-  #define NumericVersion "3.0.0.6"
+  #define NumericVersion "3.0.0.7"
 #endif
 #ifndef OutputRoot
   #define OutputRoot RepoRoot + "\dist"
@@ -61,6 +61,7 @@ DisableDirPage=no
 DisableProgramGroupPage=no
 AllowNoIcons=yes
 UninstallDisplayIcon={app}\CodexQuotaStrip.exe
+SetupIconFile={#RepoRoot}\assets\icons\app.ico
 UninstallDisplayName={#InstallerName}
 ; 不使用 Restart Manager 关闭程序，更不安装登录自启或修改 Codex 启动 hook。
 CloseApplications=no

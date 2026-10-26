@@ -1,0 +1,4 @@
+#include "AppResources.h"
+
+// 图标从构建脚本的资源搜索路径加载，支持从任意输出目录构建。
+IDI_QUOTA_APP ICON "app.ico"

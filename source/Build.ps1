@@ -21,7 +21,18 @@ try {
     $source = if ($Tests) { 'QuotaTests.cpp' } elseif ($UiProbe) { 'UiProbe.cpp' } elseif ($VisibilityTests) { 'VisibilityTests.cpp' } elseif ($TrayIconTests) { 'TrayIconTests.cpp' } elseif ($LayerTests) { 'LayerTests.cpp' } else { 'QuotaStrip.cpp' }
     $target = if ($Tests) { 'QuotaTests.exe' } elseif ($UiProbe) { 'UiProbe.exe' } elseif ($VisibilityTests) { 'VisibilityTests.exe' } elseif ($TrayIconTests) { 'TrayIconTests.exe' } elseif ($LayerTests) { 'LayerTests.exe' } else { 'CodexQuotaStrip.exe' }
     if ($Extra) { $source = $Extra + '.cpp'; $target = $Extra + '.exe' }
+    $resource = $null
+    if ($source -eq 'QuotaStrip.cpp') {
+        # 应用图标嵌入 EXE，快捷方式和卸载入口无需额外的运行时图标文件。
+        $resourceCompiler = Join-Path $kits ('bin\' + $sdk.Name + '\x64\rc.exe')
+        if (-not (Test-Path -LiteralPath $resourceCompiler -PathType Leaf)) { throw 'Windows SDK resource compiler rc.exe is missing. Install the SDK desktop tools.' }
+        $resource = Join-Path $OutputDirectory 'AppResources.res'
+        $iconDirectory = Join-Path (Split-Path $PSScriptRoot -Parent) 'assets\icons'
+        & $resourceCompiler /nologo /c65001 /I $PSScriptRoot /I $iconDirectory /fo $resource (Join-Path $PSScriptRoot 'AppResources.rc')
+        if ($LASTEXITCODE -ne 0) { throw "Application icon resource compilation failed with exit code $LASTEXITCODE" }
+    }
     $arguments = @('/nologo','/std:c++17','/EHsc','/W4','/utf-8','/O2','/MT','/DUNICODE','/D_UNICODE','/D_CRT_SECURE_NO_WARNINGS',('/Fe:' + (Join-Path $OutputDirectory $target)),(Join-Path $PSScriptRoot $source))
+    if ($resource) { $arguments += $resource }
     if($source -in @('QuotaStrip.cpp','ProviderProbe.cpp','ProviderEnvironmentTests.cpp')){$arguments+=(Join-Path $PSScriptRoot 'QuotaProvider.cpp')}
     if ($UiProbe -or $VisibilityTests -or $TrayIconTests -or $LayerTests -or $Extra) { $arguments += @('/link','user32.lib','gdi32.lib','shell32.lib','dwmapi.lib','comctl32.lib') }
     elseif (-not $Tests) { $arguments += @('/link','/SUBSYSTEM:WINDOWS','user32.lib','gdi32.lib','comctl32.lib','shell32.lib','advapi32.lib','dwmapi.lib','imm32.lib','uxtheme.lib') }

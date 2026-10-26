@@ -7,6 +7,7 @@
 #include "QuotaHistory.h"
 #include "RequestUsage.h"
 #include "ConversationNames.h"
+#include "AppResources.h"
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -90,6 +91,11 @@ quota::Settings GetPreferences(){std::lock_guard<std::mutex> lock(preferencesMut
 const wchar_t* Ui(const wchar_t* value){return quota::Translate(value,GetPreferences().english);}
 bool IsStale(const Data& s,long long now){return !s.snapshot.observed || now-s.snapshot.observed>=GetPreferences().staleMinutes*60000LL || (!s.watching&&!s.fromServer);}
 int px(int x) { return MulDiv(x, static_cast<int>(dpi), 96); }
+void SetApplicationIcons(WNDCLASSEXW& cls) {
+    // 资源共享句柄由系统管理；窗口使用适合标题栏和任务栏的两档图标，不额外定时绘制。
+    cls.hIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_QUOTA_APP), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED));
+    cls.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_QUOTA_APP), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
+}
 std::wstring Lower(std::wstring s) { for (auto& c : s) c = static_cast<wchar_t>(std::towlower(c)); return s; }
 bool EndsWith(const std::wstring& s, const wchar_t* suffix) { size_t n = wcslen(suffix); return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0; }
 std::filesystem::path HistoryDirectory(const quota::Settings& config){return config.historyDirectory.empty()?std::filesystem::path(settingsPath).parent_path()/L"history":std::filesystem::path(config.historyDirectory);}
@@ -791,7 +797,7 @@ void OpenHistory(){
     if(headless)return;
     if(historyWindow){ShowWindow(historyWindow,SW_RESTORE);SetForegroundWindow(historyWindow);TranslateHistory();LayoutHistory(historyWindow);RefreshHistory();return;}
     WNDCLASSEXW chart{sizeof(chart)};chart.hInstance=instance;chart.lpfnWndProc=HistoryChartProcedure;chart.lpszClassName=L"QuotaHistoryChart";chart.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassExW(&chart);
-    std::wstring name=L"QuotaHistory_"+windowClass;WNDCLASSEXW cls{sizeof(cls)};cls.hInstance=instance;cls.lpfnWndProc=HistoryProcedure;cls.lpszClassName=name.c_str();cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassExW(&cls);
+    std::wstring name=L"QuotaHistory_"+windowClass;WNDCLASSEXW cls{sizeof(cls)};cls.hInstance=instance;cls.lpfnWndProc=HistoryProcedure;cls.lpszClassName=name.c_str();cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);SetApplicationIcons(cls);RegisterClassExW(&cls);
     UINT d=GetDpiForSystem();RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
     int width=std::min<int>(MulDiv(1040,d,96),work.right-work.left),height=std::min<int>(MulDiv(660,d,96),work.bottom-work.top);
     historyWindow=CreateWindowExW(0,name.c_str(),Ui(L"Codex 配额 — 额度变化"),WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,work.left+(work.right-work.left-width)/2,work.top+(work.bottom-work.top-height)/2,width,height,nullptr,nullptr,instance,nullptr);
@@ -969,7 +975,7 @@ LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
 void OpenSettings(){
     if(headless)return;if(settingsWindow){ShowWindow(settingsWindow,SW_RESTORE);SetForegroundWindow(settingsWindow);return;}
     std::wstring name=L"QuotaSettings_"+windowClass;
-    WNDCLASSEXW cls{sizeof(cls)};cls.hInstance=instance;cls.lpfnWndProc=SettingsProcedure;cls.lpszClassName=name.c_str();cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassExW(&cls);
+    WNDCLASSEXW cls{sizeof(cls)};cls.hInstance=instance;cls.lpfnWndProc=SettingsProcedure;cls.lpszClassName=name.c_str();cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);SetApplicationIcons(cls);RegisterClassExW(&cls);
     UINT d=GetDpiForSystem();RECT bounds{0,0,MulDiv(620,d,96),MulDiv(858,d,96)};DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_VSCROLL;AdjustWindowRectExForDpi(&bounds,style,FALSE,0,d);
     RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
     int width=bounds.right-bounds.left,height=std::min(bounds.bottom-bounds.top,work.bottom-work.top);
@@ -1099,6 +1105,7 @@ int WINAPI wWinMain(HINSTANCE app, HINSTANCE, PWSTR, int) {
     quota::Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr)), rescan(CreateEventW(nullptr, TRUE, FALSE, nullptr)),refresh(CreateEventW(nullptr,TRUE,FALSE,nullptr));stopEvent=stop;rescanEvent=rescan;refreshEvent=refresh;
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_WIN95_CLASSES}; InitCommonControlsEx(&controls);
     WNDCLASSEXW cls{sizeof(cls)}; cls.hInstance = instance; cls.lpfnWndProc = Procedure; cls.lpszClassName = windowClass.c_str(); cls.style = CS_DBLCLKS; cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    SetApplicationIcons(cls);
     if (!RegisterClassExW(&cls)) return 1;
     cls.lpszClassName=controllerClass.c_str();if(!RegisterClassExW(&cls))return 1;
     controller=CreateWindowExW(WS_EX_TOOLWINDOW,controllerClass.c_str(),Ui(L"Codex 配额控制器 2.0"),WS_POPUP,0,0,0,0,nullptr,nullptr,instance,nullptr);

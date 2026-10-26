@@ -155,6 +155,10 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
 }
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
     (void)notification;
+    // bundle 的品牌图标同时用于 Finder 和原生应用身份；菜单栏继续显示实时数值。
+    NSString* iconPath = [NSBundle.mainBundle pathForResource:@"app" ofType:@"icns"];
+    NSImage* applicationIcon = iconPath ? [[NSImage alloc] initWithContentsOfFile:iconPath] : nil;
+    if (applicationIcon.isValid) NSApp.applicationIconImage = applicationIcon;
     configRoot = options.smoke ? std::filesystem::temp_directory_path() / ("quota-mac-smoke-" + std::to_string(getpid())) : ConfigDirectory();
     // 冒烟测试在 Engine 启动前覆盖日志路径，不触碰真实账户的默认目录。
     if (options.smoke) { options.preferences.home = (configRoot / "home").string(); options.preferences.historyDirectory = (configRoot / "history").string(); }
@@ -197,6 +201,8 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
         auto frame = Placement({100, 50, 900, 600}, false);
         [strip setFrame:NSMakeRect(frame.x, frame.y, frame.width, frame.height) display:YES]; [strip orderFront:nil];
         BOOL passed = statusItem.button != nil && config.isVisible && engine->preferences().seconds == 45 && stored.seconds == 45 && stored.chinese && [config.title isEqualToString:@"Codex 配额 — 设置"] && !strip.canBecomeKeyWindow;
+        passed = passed && applicationIcon.isValid && [[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleIconFile"] isEqualToString:@"app.icns"];
+        if (passed) std::cout << "PASS: macOS packaged ICNS and bundle icon declaration\n";
         [language selectItemAtIndex:1];[self apply:nil];passed=passed&&[config.title isEqualToString:@"Codex Quota — Settings"]&&!Load(configRoot/"settings.ini").chinese;
         passed = passed && stored.historyDirectory == (configRoot / "selected-history").string();
         passed = passed && configScroll.documentView == configForm && configScroll.hasVerticalScroller && configApply.superview == configActions &&

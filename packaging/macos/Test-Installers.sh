@@ -9,11 +9,21 @@ cleanup(){
   case "$work" in "${TMPDIR:-/tmp}"/quota-mac-package.*) rm -rf -- "$work" ;; esac
 }
 trap cleanup EXIT
+check_icon(){
+  local app=$1
+  test -s "$app/Contents/Resources/app.icns"
+  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$app/Contents/Info.plist")" = app.icns
+  cmp "$build_dir/CodexQuotaStrip.app/Contents/Resources/app.icns" "$app/Contents/Resources/app.icns"
+}
+# ZIP、DMG 与 PKG 都必须保留与构建产物一致的图标，不仅检查源码中的声明。
+unzip -p "$build_dir/CodexQuotaStrip-macos-universal.zip" '*/CodexQuotaStrip.app/Contents/Resources/app.icns' > "$work/zip-app.icns"
+cmp "$build_dir/CodexQuotaStrip.app/Contents/Resources/app.icns" "$work/zip-app.icns"
 mkdir "$work/mount"
 hdiutil attach -nobrowse -readonly -mountpoint "$work/mount" "$output/CodexQuotaStrip-macos-universal.dmg"
 mounted=true
 test -L "$work/mount/Applications"
 codesign --verify --deep --strict "$work/mount/CodexQuotaStrip.app"
+check_icon "$work/mount/CodexQuotaStrip.app"
 lipo "$work/mount/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip" -verify_arch arm64 x86_64
 hdiutil detach "$work/mount"; mounted=false
 # 只在一次性 CI runner 进行系统级 PKG 安装，拒绝覆盖预先存在的应用。
@@ -25,6 +35,7 @@ test ! -d "$work/expanded/Scripts"
 sudo installer -pkg "$output/CodexQuotaStrip-macos-universal.pkg" -target /
 test "$(stat -f '%Lp:%u:%g' /Applications)" = "$applications_metadata"
 codesign --verify --deep --strict /Applications/CodexQuotaStrip.app
+check_icon /Applications/CodexQuotaStrip.app
 cmp "$build_dir/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip" /Applications/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip
 test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' /Applications/CodexQuotaStrip.app/Contents/Info.plist)" = 14.0
 /Applications/CodexQuotaStrip.app/Contents/MacOS/CodexQuotaStrip --smoke-test

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Codex Quota Strip</title>
+  <desc>A mint quota ring and two usage bars on a dark rounded tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="168" y1="72" x2="824" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2D3C36"/>
+      <stop offset="1" stop-color="#111918"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="168" y1="48" x2="840" y2="976" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6E8B7F" stop-opacity=".65"/>
+      <stop offset="1" stop-color="#33463F" stop-opacity=".25"/>
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="216" fill="url(#tile)"/>
+  <rect x="55" y="55" width="914" height="914" rx="209" stroke="url(#edge)" stroke-width="14"/>
+  <circle cx="512" cy="488" r="244" stroke="#456459" stroke-width="84"/>
+  <path d="M684.53 660.53 A244 244 0 1 1 749.22 430.85" stroke="#9DDCC7" stroke-width="84" stroke-linecap="round"/>
+  <rect x="400" y="456" width="76" height="144" rx="38" fill="#EAF5EF"/>
+  <rect x="548" y="376" width="76" height="224" rx="38" fill="#EAF5EF"/>
+  <path d="M667 643 L739 715" stroke="#9DDCC7" stroke-width="80" stroke-linecap="round"/>
+</svg>

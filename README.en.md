@@ -1,5 +1,7 @@
 # Codex Quota Strip
 
+<img src="assets/icons/app-128.png" alt="Codex Quota Strip application icon" width="72" height="72">
+
 [中文](README.md) | **English** · [MIT License](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 Codex Quota Strip is a lightweight desktop companion for Windows, Linux and macOS. It puts **remaining five-hour quota** and **remaining weekly quota** in the system tray/menu bar, with an optional top/left strip that follows the Codex window. Check your remaining allowance while working without repeatedly opening the account menu.
@@ -8,7 +10,7 @@ It is intended for Codex desktop or CLI users who want visible quota values and 
 
 Built with C++17 and native platform interfaces, without Electron or WebView. Chinese/English can be selected in Settings and applied immediately. This is an independently running companion, not affiliated with OpenAI. See [README.md](README.md) for the Chinese guide.
 
-**[Download v3.0.0-preview.6](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.6)** · [What's new](docs/releases/v3.0.0-preview.6.en.md) · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
+**[Download v3.0.0-preview.7](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.7)** · [What's new](docs/releases/v3.0.0-preview.7.en.md) · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
 
 Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 
@@ -62,7 +64,7 @@ Open the history viewer from Settings or the tray/menu bar and select **Work req
 - Quota columns show **reference account snapshot changes**. They may include concurrent requests, and the starting snapshot may predate the request. They are not an individually attributable charge. Reset/authentication boundaries do not produce cross-boundary quota differences.
 - Local events do not provide verifiable actual charges per request: the amount is “—”, and actual amount/currency CSV fields stay empty. Subscription percentages cannot be converted into dollars; [official pricing guidance](https://learn.chatgpt.com/docs/pricing) distinguishes API token prices from subscription usage.
 - All platforms use filesystem events: initial per-file tails are limited to 256 KiB; tracked requests allow up to 8 MiB for one catch-up. Final-response text is streamed away, retaining a 32 KiB metadata-buffer limit. Gaps beyond these bounds yield partial records where identifiable; unrecoverable events may be missed, and full historical recovery is not promised. Viewing is limited to the latest 30 days, 2,000 rows/2 MiB, without additional online queries, model requests or polling.
-- History, request usage and source conversations are included in v3.0.0-preview.6. Quit the previous app before updating; settings and existing CSV files are preserved.
+- History, request usage and source conversations are included in v3.0.0-preview.7. Quit the previous app before updating; settings and existing CSV files are preserved.
 
 ### Low-resource design
 

@@ -1,0 +1,4 @@
+#ifndef QUOTA_APP_RESOURCES_H
+#define QUOTA_APP_RESOURCES_H
+#define IDI_QUOTA_APP 101
+#endif

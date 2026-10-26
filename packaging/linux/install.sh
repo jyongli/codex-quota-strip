@@ -26,6 +26,8 @@ if [ "$action" = uninstall ]; then
   # 逐项删除本程序登记的文件；用户创建文件、配置及 Codex 账号数据都不在清单内。
   if [ -L "$link" ] && [ "$(readlink "$link")" = "$app_dir/CodexQuotaStrip" ]; then rm -- "$link"; fi
   if [ -f "$desktop" ] && grep -q '^X-CodexQuotaStrip-Installer=1$' "$desktop"; then rm -- "$desktop"; fi
+  # 旧版本目录中可能有用户自己的同名 PNG；仅删除本安装器明确登记的图标。
+  if [ -f "$app_dir/app-icon-id" ] && [ ! -L "$app_dir/app-icon-id" ] && [ "$(cat "$app_dir/app-icon-id")" = "$marker" ]; then rm -f -- "$app_dir/app.png" "$app_dir/app-icon-id"; fi
   for name in CodexQuotaStrip LICENSE THIRD_PARTY_NOTICES.md uninstall.sh; do rm -f -- "$app_dir/$name"; done
   # 额外用户文件使目录非空时保留所有权标记，后续可以重装；不误判为外部目录。
   if [ -z "$(find "$app_dir" -mindepth 1 -maxdepth 1 ! -name package-id -print -quit)" ]; then
@@ -38,6 +40,8 @@ fi
 [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || { echo 'This package requires Linux x86_64 (glibc desktop)' >&2; exit 1; }
 binary="$source_root/usr/bin/CodexQuotaStrip"
 [ -f "$binary" ] || { echo 'Run install.sh from the extracted release archive' >&2; exit 1; }
+icon="$source_root/usr/share/icons/hicolor/256x256/apps/codex-quota-strip.png"
+[ -s "$icon" ] || { echo 'Application icon is missing from the release archive' >&2; exit 1; }
 command -v ldd >/dev/null || { echo 'ldd is required to check runtime dependencies' >&2; exit 1; }
 if ! libraries=$(ldd "$binary" 2>&1) || [[ "$libraries" == *'not found'* ]]; then
   printf '%s\n' "$libraries" >&2
@@ -45,8 +49,15 @@ if ! libraries=$(ldd "$binary" 2>&1) || [[ "$libraries" == *'not found'* ]]; the
 fi
 if { [ -e "$link" ] || [ -L "$link" ]; } && { [ ! -L "$link" ] || [ "$(readlink "$link")" != "$app_dir/CodexQuotaStrip" ]; }; then echo 'Existing command is not owned by this installer' >&2; exit 1; fi
 if [ -e "$desktop" ] && ! grep -q '^X-CodexQuotaStrip-Installer=1$' "$desktop"; then echo 'Existing desktop entry is not owned by this installer' >&2; exit 1; fi
+if { [ -e "$app_dir/app.png" ] || [ -L "$app_dir/app.png" ] || [ -e "$app_dir/app-icon-id" ] || [ -L "$app_dir/app-icon-id" ]; } &&
+   { [ ! -f "$app_dir/app-icon-id" ] || [ -L "$app_dir/app-icon-id" ] || [ -L "$app_dir/app.png" ] || [ "$(cat "$app_dir/app-icon-id")" != "$marker" ]; }; then
+  echo 'Existing application icon is not owned by this installer' >&2; exit 1
+fi
 mkdir -p -- "$app_dir" "$prefix/bin" "$prefix/share/applications"
 install -m 755 -- "$binary" "$app_dir/CodexQuotaStrip"
+# 用户安装只拥有私有副本，不写入或删除用户共享的 hicolor 图标主题。
+install -m 644 -- "$icon" "$app_dir/app.png"
+printf '%s\n' "$marker" > "$app_dir/app-icon-id"
 for name in LICENSE THIRD_PARTY_NOTICES.md; do install -m 644 -- "$source_root/usr/share/doc/codex-quota-strip/$name" "$app_dir/$name"; done
 install -m 755 -- "$source_root/install.sh" "$app_dir/uninstall.sh"
 printf '%s\n' "$marker" > "$app_dir/package-id"
@@ -56,7 +67,7 @@ cat > "$desktop" <<EOF
 Type=Application
 Name=Codex Quota Strip
 Exec="$app_dir/CodexQuotaStrip"
-Icon=utilities-system-monitor
+Icon=$app_dir/app.png
 Terminal=false
 Categories=Utility;
 X-CodexQuotaStrip-Installer=1

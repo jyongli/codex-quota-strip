@@ -1,5 +1,7 @@
 # Codex Quota Strip
 
+<img src="assets/icons/app-128.png" alt="Codex Quota Strip 应用图标" width="72" height="72">
+
 **中文** | [English](README.en.md) · [MIT 许可证](LICENSE) · [贡献指南](CONTRIBUTING.md) · [安全说明](SECURITY.md) · [变更记录](CHANGELOG.md)
 
 Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅助程序，将 **5 小时剩余配额** 和 **周剩余配额** 放到系统托盘／菜单栏，也可显示在跟随 Codex 窗口的顶部／左侧配额条中。使用 Codex 时可以直接查看余额，无需反复打开账号菜单。
@@ -8,7 +10,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 
 程序使用 C++17 和原生系统界面，不依赖 Electron 或 WebView。中文／English 可在设置中切换并保存，立即生效。它是独立运行的辅助程序，与 OpenAI 没有官方隶属关系。英文说明见 [README.en.md](README.en.md)。
 
-**[下载 v3.0.0-preview.6](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.6)** · [本版更新](docs/releases/v3.0.0-preview.6.zh-CN.md) · [安装包选择／兼容环境／安装与卸载](docs/installers.zh-CN.md) · [Linux／macOS 构建](docs/native-desktop.zh-CN.md)
+**[下载 v3.0.0-preview.7](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.7)** · [本版更新](docs/releases/v3.0.0-preview.7.zh-CN.md) · [安装包选择／兼容环境／安装与卸载](docs/installers.zh-CN.md) · [Linux／macOS 构建](docs/native-desktop.zh-CN.md)
 
 下文的命令及详细配置主要针对 Windows；Linux／macOS 请使用上面的独立原生指南。
 
@@ -62,7 +64,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 - 额度列是**账户参考快照变化**，可能包含并发请求，起点快照也可能早于请求开始；它不是单请求独立扣费，周期重置或认证切换不计算跨边界差值。
 - 本地事件没有可验证的逐请求实际金额，金额显示“—”，CSV 的实际金额／币种留空。Pro／Plus 订阅百分比不能换算为美元；[官方计价说明](https://learn.chatgpt.com/docs/pricing)区分 API Token 计价与订阅使用量。
 - 三平台使用文件事件监听，初读单文件最多最新 256 KiB；已追踪请求允许最多 8 MiB 的一次追赶，最终回复正文流式跳过、元数据缓冲上限仍为 32 KiB。超过读取上限时只保留仍可解析的部分记录，无法恢复的事件可能遗漏；不承诺恢复未监听时的全部历史。查看记录沿用最近 30 天、2000 行／2 MiB 上限，不增加在线配额查询、模型请求或后台轮询。
-- 历史、请求用量与所属对话功能均包含在 v3.0.0-preview.6 下载包中。升级前退出旧程序；设置和原有 CSV 保留。
+- 历史、请求用量与所属对话功能均包含在 v3.0.0-preview.7 下载包中。升级前退出旧程序；设置和原有 CSV 保留。
 
 ### 低资源占用设计
 

@@ -19,4 +19,4 @@ ditto "$app" "$stage/pkgroot/Applications/CodexQuotaStrip.app"
 pkgbuild --analyze --root "$stage/pkgroot" "$stage/components.plist"
 # 禁止组件自动定位到其他同 bundle ID 的副本，例如用户的 Downloads 或构建目录。
 /usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "$stage/components.plist"
-pkgbuild --root "$stage/pkgroot" --component-plist "$stage/components.plist" --install-location / --identifier io.github.jyongli.codex-quota-strip --version 3.0.0.6 "$output/CodexQuotaStrip-macos-universal.pkg"
+pkgbuild --root "$stage/pkgroot" --component-plist "$stage/components.plist" --install-location / --identifier io.github.jyongli.codex-quota-strip --version 3.0.0.7 "$output/CodexQuotaStrip-macos-universal.pkg"
