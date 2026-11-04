@@ -1,4 +1,5 @@
 #include "NativeCore.h"
+#include "Localization.h"
 #include "../source/ConversationNames.h"
 #include "../source/ProxyConfig.h"
 #include <spawn.h>
@@ -417,8 +418,11 @@ std::string Remaining(quota::Window value, long long now) {
     double remaining = std::clamp(100.0 - value.used, 0.0, 100.0);
     std::ostringstream out; out.imbue(std::locale::classic()); out << std::fixed << std::setprecision(std::abs(remaining - std::round(remaining)) < 0.001 ? 0 : 1) << remaining << '%'; return out.str();
 }
-bool Stale(const State& state, const Preferences& value, long long now) { return !state.snapshot.observed || now - state.snapshot.observed >= value.staleMinutes * 60000LL; }
-std::string Summary(const State& state, const Preferences& value, long long now) { return (quota::WeeklyOnly(state.snapshot) ? "" : "5h " + Remaining(state.snapshot.fiveHour, now) + "  ") + "W " + Remaining(state.snapshot.weekly, now) + (Stale(state, value, now) ? " *" : ""); }
+bool Stale(const State& state, const Preferences& value, long long now) { return !quota::NoSubscriptionQuota(state.accountMode) && (!state.snapshot.observed || now - state.snapshot.observed >= value.staleMinutes * 60000LL); }
+std::string Summary(const State& state, const Preferences& value, long long now) {
+    if (quota::NoSubscriptionQuota(state.accountMode)) return Translate("API / Token mode", value.chinese);
+    return (quota::WeeklyOnly(state.snapshot) ? "" : "5h " + Remaining(state.snapshot.fiveHour, now) + "  ") + "W " + Remaining(state.snapshot.weekly, now) + (Stale(state, value, now) ? " *" : "");
+}
 bool HostMatches(const std::string& identifier, const std::string& configured) {
     auto name = Lower(identifier), expected = Lower(configured);
     return !expected.empty() && (name.find(expected) != std::string::npos || (expected == "codex" && name.find("chatgpt") != std::string::npos));
@@ -481,7 +485,9 @@ QueryResult Query(const std::string& binary, const std::string& home, const std:
             return position == value.size();
         };
         std::string buffer; size_t total = 0;
+        bool remoteError = false;
         auto receive = [&](int id, quota::Json& result) {
+            remoteError = false;
             while (available()) {
                 size_t end;
                 while ((end = buffer.find('\n')) != std::string::npos) {
@@ -490,7 +496,7 @@ QueryResult Query(const std::string& binary, const std::string& home, const std:
                     try {
                         auto json = quota::JsonParser(line).parse(); const auto& identity = json.get("id");
                         if (identity.kind != quota::Json::Number || identity.num != id) continue;
-                        if (json.get("error").kind != quota::Json::Null) { answer.error = "Codex account query failed"; return false; }
+                        if (json.get("error").kind != quota::Json::Null) { remoteError = true; answer.error = "Codex account query failed"; return false; }
                         result = json.get("result"); return result.kind == quota::Json::Object;
                     } catch (...) { continue; }
                 }
@@ -507,9 +513,22 @@ QueryResult Query(const std::string& binary, const std::string& home, const std:
         };
         quota::Json reply;
         if (!send("{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"codex_quota_strip\",\"version\":\"3.0.0\"}}}\n") || !receive(1, reply)) { if (answer.error.empty()) answer.error = "Cannot communicate with Codex"; return answer; }
-        if (!send("{\"method\":\"initialized\"}\n{\"id\":2,\"method\":\"account/rateLimits/read\"}\n") || !receive(2, reply)) { if (answer.error.empty()) answer.error = "Cannot read Codex account quota"; return answer; }
-        if (!quota::ReadLimits(reply, answer.snapshot)) { answer.error = "Codex returned no supported quota windows"; return answer; }
-        answer.snapshot.observed = NowMs(); answer.ok = true;
+        if (!send("{\"method\":\"initialized\"}\n{\"id\":2,\"method\":\"account/rateLimits/read\"}\n")) { answer.error = "Cannot read Codex account quota"; return answer; }
+        bool limitsReceived = receive(2, reply);
+        if (!limitsReceived && !remoteError) { if (answer.error.empty()) answer.error = "Cannot read Codex account quota"; return answer; }
+        if (limitsReceived && quota::ReadLimits(reply, answer.snapshot) && (answer.snapshot.fiveHour.present || answer.snapshot.weekly.present)) {
+            // 原额度成功路径优先，不为订阅账号多发 account/read。
+            answer.snapshot.observed = NowMs(); answer.accountMode = quota::AccountMode::Subscription; answer.ok = true; return answer;
+        }
+        const std::string quotaError = limitsReceived ? "Codex returned no supported quota windows" : answer.error;
+        answer.snapshot = {};
+        // 仅远端拒绝额度或缺窗口时，用同一子进程的安全摘要辨别模式；不刷新 token。
+        if (!send("{\"id\":3,\"method\":\"account/read\",\"params\":{\"refreshToken\":false}}\n") || !receive(3, reply)) {
+            if (answer.error.empty()) answer.error = quotaError; return answer;
+        }
+        answer.accountMode = quota::ReadAccountMode(reply);
+        if (quota::NoSubscriptionQuota(answer.accountMode)) { answer.ok = true; answer.error.clear(); }
+        else answer.error = answer.accountMode == quota::AccountMode::SignedOut ? "Codex account is signed out" : quotaError;
         return answer;
     } catch (...) { answer.error = "Codex query failed"; return answer; }
 }
@@ -529,7 +548,9 @@ quota::RequestReadResult Engine::requests(size_t maxRows) {
 void Engine::configure(Preferences value) {
     if (!Valid(value)) return;
     bool homeChanged, sessionsChanged, recording; unsigned sessionGeneration; std::string currentHome;
-    { std::lock_guard<std::mutex> lock(mutex_); homeChanged = value.home != preferences_.home; if (homeChanged) { state_.snapshot = {}; authIdentity_ = AuthStamp(value.home); authBoundaryMs_ = NowMs(); history_.reset(); }
+    { std::lock_guard<std::mutex> lock(mutex_); homeChanged = value.home != preferences_.home; if (homeChanged) { state_.snapshot = {}; state_.accountMode = quota::AccountMode::Unknown; authIdentity_ = AuthStamp(value.home); authBoundaryMs_ = NowMs(); history_.reset(); }
+      // 更换查询可执行文件也可能切到不同 provider；语言、位置等显示设置保留已确认模式。
+      if (value.binary != preferences_.binary) { state_.snapshot = {}; state_.accountMode = quota::AccountMode::Unknown; history_.reset(); }
       sessionsChanged = homeChanged || value.historyEnabled != preferences_.historyEnabled || value.historyDirectory != preferences_.historyDirectory;
       if (sessionsChanged) ++sessionGeneration_;
       history_.configure(value.historyEnabled, value.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(value.historyDirectory));
@@ -544,7 +565,7 @@ void Engine::configure(Preferences value) {
 bool Engine::observeAccountLocked() {
     const auto identity = AuthStamp(preferences_.home);
     if (identity == authIdentity_) return false;
-    authIdentity_ = identity; authBoundaryMs_ = NowMs(); state_.snapshot = {}; state_.error = "Account changed; waiting for new quota";
+    authIdentity_ = identity; authBoundaryMs_ = NowMs(); state_.snapshot = {}; state_.accountMode = quota::AccountMode::Unknown; state_.error = "Account changed; waiting for new quota";
     history_.reset(); ++sessionGeneration_; ++generation_; queryCancelled_ = true; requested_ = true;
     return true;
 }
@@ -605,7 +626,7 @@ void Engine::run() {
             generation = generation_; state_.refreshing = true;
         }
         std::string stamp = AuthStamp(settings.home);
-        if (previousHome != settings.home || (!previousAuth.empty() && previousAuth != stamp)) { std::lock_guard<std::mutex> lock(mutex_); state_.snapshot = {}; history_.reset(); }
+        if (previousHome != settings.home || (!previousAuth.empty() && previousAuth != stamp)) { std::lock_guard<std::mutex> lock(mutex_); state_.snapshot = {}; state_.accountMode = quota::AccountMode::Unknown; history_.reset(); }
         previousHome = settings.home; previousAuth = stamp;
         if (changed_) changed_();
         lastAttempt = std::chrono::steady_clock::now();
@@ -613,13 +634,20 @@ void Engine::run() {
         {
             std::lock_guard<std::mutex> lock(mutex_); state_.refreshing = false;
             if (generation == generation_) {
-                if (AuthStamp(settings.home) != stamp) { state_.snapshot = {}; state_.error = "Account changed; refresh again"; history_.reset(); }
+                if (AuthStamp(settings.home) != stamp) { state_.snapshot = {}; state_.accountMode = quota::AccountMode::Unknown; state_.error = "Account changed; refresh again"; history_.reset(); }
                 else if (answer.ok) {
-                    state_.snapshot = answer.snapshot; state_.error.clear(); failures = 0;
+                    const bool modeChanged = state_.accountMode != answer.accountMode;
+                    state_.snapshot = answer.snapshot; state_.accountMode = answer.accountMode; state_.error.clear(); failures = 0;
                     // 仅接受当前账号/配置代次的真实成功结果，日志失败不覆盖查询结果。
-                    history_.record(answer.snapshot, "account"); state_.historyError = history_.error();
+                    if (modeChanged) history_.reset();
+                    if (!quota::NoSubscriptionQuota(answer.accountMode)) history_.record(answer.snapshot, "account");
+                    state_.historyError = history_.error();
                 }
-                else { state_.error = answer.error; ++failures; }
+                else {
+                    if (answer.accountMode == quota::AccountMode::SignedOut) { state_.snapshot = {}; state_.accountMode = answer.accountMode; history_.reset(); }
+                    else if (answer.accountMode == quota::AccountMode::Subscription) state_.accountMode = answer.accountMode;
+                    state_.error = answer.error; ++failures;
+                }
             }
             int delay = failures ? std::min(900, preferences_.seconds * (1 << std::min(failures, 3u))) : preferences_.seconds;
             nextDue = std::chrono::steady_clock::now() + std::chrono::seconds(delay);

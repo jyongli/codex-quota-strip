@@ -49,6 +49,10 @@ int main(int argc, char** argv) {
         nativequota::State weekly; weekly.snapshot.weekly = {true, 46, 0}; weekly.snapshot.observed = nativequota::NowMs();
         require(nativequota::Summary(weekly, settings, nativequota::NowMs()) == "W 54%", "Weekly-only native menu bar must omit five-hour label");
         require(nativequota::Placement({100, 50, 900, 600}, true, true).height == 56, "Weekly-only native overlay must compact its geometry");
+        nativequota::State api; api.accountMode = quota::AccountMode::ApiKey;
+        require(nativequota::Summary(api, settings, nativequota::NowMs()) == "API / Token 模式" && !nativequota::Stale(api, settings, nativequota::NowMs()), "Known API mode must display its localized label without missing-quota or stale placeholders");
+        auto english = settings; english.chinese = false; api.accountMode = quota::AccountMode::ExternalProvider;
+        require(nativequota::Summary(api, english, nativequota::NowMs()) == "API / Token mode", "External provider summary must be clear in English");
         { nativequota::InstanceLock first(root / "instance.lock"); require(first.acquired(), "First instance must acquire lock"); nativequota::InstanceLock second(root / "instance.lock"); require(!second.acquired(), "Duplicate instance must fail lock"); }
         { nativequota::InstanceLock third(root / "instance.lock"); require(third.acquired(), "Exited instance must release lock"); }
         settings.binary = std::filesystem::absolute(argv[1]).string(); settings.online = true;
@@ -57,7 +61,7 @@ int main(int argc, char** argv) {
         engine.start([&] { ++notifications; });
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         while ((!engine.state().snapshot.observed || notifications.load() < 2) && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        require(engine.state().snapshot.fiveHour.used == 20, "Refresh engine must query real fake-server process");
+        require(engine.state().snapshot.fiveHour.used == 20 && engine.state().accountMode == quota::AccountMode::Subscription, "Refresh engine must query real fake-server process");
         auto history = engine.history();
         require(history.entries.size() == 1 && history.entries[0].snapshot.fiveHour.used == 20 && history.entries[0].source == "account", "Successful engine query must be readable from the selected quota history directory");
         int before = notifications.load(); std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -66,7 +70,7 @@ int main(int argc, char** argv) {
         { std::ofstream auth(std::filesystem::path(settings.home) / "auth.json"); auth << "synthetic-account-b-with-new-metadata"; }
         deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (engine.state().snapshot.observed && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        require(engine.state().snapshot.observed == 0, "Auth-file change must clear the previous account even while online refresh is disabled");
+        require(engine.state().snapshot.observed == 0 && engine.state().accountMode == quota::AccountMode::Unknown, "Auth-file change must clear the previous account and login mode even while online refresh is disabled");
         settings.online = true; engine.configure(settings);
         deadline = std::chrono::steady_clock::now() + std::chrono::seconds(7);
         while (!engine.state().snapshot.observed && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -90,7 +94,30 @@ int main(int argc, char** argv) {
         while (engine.state().snapshot.observed && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         require(engine.state().snapshot.observed == 0, "Moving auth.json away must clear cached quota even with online queries off");
         settings.home = (root / "second account").string(); settings.online = false; engine.configure(settings);
-        require(engine.state().snapshot.observed == 0, "Changing account home must clear previous snapshot"); engine.stop();
+        require(engine.state().snapshot.observed == 0 && engine.state().accountMode == quota::AccountMode::Unknown, "Changing account home must clear previous snapshot and login mode"); engine.stop();
+        // 同一 Engine 真实经历订阅→API→订阅，沿用查询节流，确认日志不产生伪造额度。
+        auto modes = settings; modes.home = (root / "mode-home").string(); modes.historyDirectory = (root / "mode-history").string(); modes.online = true;
+        std::filesystem::create_directories(modes.home); unsetenv("QUOTA_FAKE_MODE");
+        nativequota::Engine modeEngine(modes); modeEngine.start([] {});
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (modeEngine.state().accountMode != quota::AccountMode::Subscription && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        require(modeEngine.state().snapshot.fiveHour.present && modeEngine.history().entries.size() == 1, "Mode transition fixture must begin with a real subscription quota");
+        setenv("QUOTA_FAKE_MODE", "api-key", 1); modeEngine.refresh();
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(7);
+        while (modeEngine.state().accountMode != quota::AccountMode::ApiKey && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        auto apiState = modeEngine.state();
+        require(apiState.accountMode == quota::AccountMode::ApiKey && !apiState.snapshot.observed && !apiState.snapshot.fiveHour.present && !apiState.snapshot.weekly.present && apiState.error.empty() && modeEngine.history().entries.size() == 1,
+            "API mode must replace cached subscription values without fabricating history or entering failure state");
+        setenv("QUOTA_FAKE_MODE", "success", 1); modeEngine.refresh();
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(7);
+        while (modeEngine.state().accountMode != quota::AccountMode::Subscription && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        require(modeEngine.state().snapshot.fiveHour.used == 20 && modeEngine.state().accountMode == quota::AccountMode::Subscription && modeEngine.history().entries.size() == 2 && modeEngine.history().entries.back().kind == "baseline", "Restored subscription mode must recover numeric quota and an independent history baseline");
+        setenv("QUOTA_FAKE_MODE", "signed-out", 1); modeEngine.refresh();
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(7);
+        while (modeEngine.state().accountMode != quota::AccountMode::SignedOut && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        require(modeEngine.state().accountMode == quota::AccountMode::SignedOut && !modeEngine.state().snapshot.observed && !modeEngine.state().snapshot.fiveHour.present && modeEngine.state().error == "Codex account is signed out" && modeEngine.history().entries.size() == 2,
+            "Signed-out account must clear cached subscription values and preserve quota history without an empty entry");
+        modeEngine.stop(); unsetenv("QUOTA_FAKE_MODE");
         // 在线查询关闭时，新建多级会话目录和追加完成事件仍应触发真实 token 记录。
         settings.home = (root / "request-home").string(); settings.historyDirectory = (root / "request-history").string(); settings.online = false;
         std::filesystem::create_directories(settings.home);

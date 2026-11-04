@@ -11,13 +11,24 @@ std::wstring environment(const wchar_t* name){DWORD length=GetEnvironmentVariabl
 const wchar_t* keys[]{L"HTTP_PROXY",L"HTTPS_PROXY",L"ALL_PROXY",L"NO_PROXY"};
 // 假 app-server 只验证自己的环境，返回合成额度，不连接网络也不访问账号。
 int fakeServer(){
+    auto mode=environment(L"QUOTA_ACCOUNT_FIXTURE");
     for(auto key:keys){std::wstring expected=environment((L"QUOTA_EXPECT_"+std::wstring(key)).c_str());if(environment(key)!=expected)return 12;}
     if(!environment(L"QUOTA_CONFIG_SECRET").empty())return 13;
     if(environment(L"CODEX_HOME")!=environment(L"QUOTA_EXPECT_HOME"))return 14;
     std::string line;
     while(std::getline(std::cin,line)){
         if(line.find("\"initialize\"")!=std::string::npos)std::cout<<"{\"id\":1,\"result\":{}}\n"<<std::flush;
-        else if(line.find("account/rateLimits/read")!=std::string::npos)std::cout<<"{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":20,\"windowDurationMins\":300}}}}\n"<<std::flush;
+        else if(line.find("account/rateLimits/read")!=std::string::npos){
+            if(mode==L"api"||mode==L"external"||mode==L"signed-out"||mode==L"network")std::cout<<"{\"id\":2,\"error\":{\"message\":\"private-account-text\"}}\n"<<std::flush;
+            else if(mode==L"empty-api")std::cout<<"{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":null,\"secondary\":null}}}\n"<<std::flush;
+            else std::cout<<"{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":20,\"windowDurationMins\":300}}}}\n"<<std::flush;
+        }else if(line.find("account/read")!=std::string::npos){
+            // 只发送账号类型，不使用或打印真实凭据。
+            if(mode==L"api"||mode==L"empty-api")std::cout<<"{\"id\":3,\"result\":{\"account\":{\"type\":\"apiKey\"},\"requiresOpenaiAuth\":true}}\n"<<std::flush;
+            else if(mode==L"external")std::cout<<"{\"id\":3,\"result\":{\"account\":null,\"requiresOpenaiAuth\":false}}\n"<<std::flush;
+            else if(mode==L"signed-out")std::cout<<"{\"id\":3,\"result\":{\"account\":null,\"requiresOpenaiAuth\":true}}\n"<<std::flush;
+            else std::cout<<"{\"id\":3,\"result\":{\"account\":{\"type\":\"chatgpt\"},\"requiresOpenaiAuth\":true}}\n"<<std::flush;
+        }
     }
     return 0;
 }
@@ -37,6 +48,17 @@ int wmain(int argc,wchar_t** argv){
         for(auto key:{L"HTTP_PROXY",L"HTTPS_PROXY"})SetEnvironmentVariableW((L"QUOTA_EXPECT_"+std::wstring(key)).c_str(),L"http://127.0.0.1:23456");
         SetEnvironmentVariableW(L"QUOTA_EXPECT_ALL_PROXY",L"socks5://127.0.0.1:23457");SetEnvironmentVariableW(L"QUOTA_EXPECT_NO_PROXY",L"localhost,127.0.0.1");
         query();
+        for(auto mode:{L"api",L"external",L"empty-api"}){
+            SetEnvironmentVariableW(L"QUOTA_ACCOUNT_FIXTURE",mode);
+            auto result=quota::ReadAccountQuota(std::filesystem::absolute(argv[0]).wstring(),home.wstring(),nullptr,2500);
+            require(result.ok&&result.error.empty()&&!result.snapshot.fiveHour.present&&!result.snapshot.weekly.present,"API key / external Token login must be a supported state without invented subscription quotas");
+        }
+        for(auto mode:{L"network",L"signed-out"}){
+            SetEnvironmentVariableW(L"QUOTA_ACCOUNT_FIXTURE",mode);
+            auto result=quota::ReadAccountQuota(std::filesystem::absolute(argv[0]).wstring(),home.wstring(),nullptr,2500);
+            require(!result.ok&&result.error.find(L"private-account-text")==std::wstring::npos,"Network / signed-out failures must remain errors and redact server details");
+        }
+        SetEnvironmentVariableW(L"QUOTA_ACCOUNT_FIXTURE",nullptr);
         // 下次查询重新读取配置；活跃 profile、大小写别名和显式清空均作用到真实子进程。
         write("profile='office'\nshell_environment_policy.set={HTTPS_PROXY='global-proxy'}\n[profiles.office.shell_environment_policy.set]\nhttps_proxy='http://127.0.0.1:23458/#literal'\nHTTP_PROXY=''\nALL_PROXY=''\nNO_PROXY=''\n");
         SetEnvironmentVariableW(L"QUOTA_EXPECT_HTTPS_PROXY",L"http://127.0.0.1:23458/#literal");

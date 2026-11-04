@@ -6,12 +6,14 @@
 #include <windows.h>
 #include <string>
 #include "QuotaCore.h"
+#include "AccountMode.h"
 
 namespace quota {
 
 // 单次 app-server 查询的结果；error 仅包含固定的通用提示，不携带子进程文本。
 struct ProviderResult {
     bool ok = false;
+    AccountMode accountMode = AccountMode::Unknown;
     Snapshot snapshot;
     std::wstring error;
     DWORD childPid = 0;

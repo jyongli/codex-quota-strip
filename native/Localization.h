@@ -7,6 +7,8 @@ inline const char* Translate(const char* english, bool chinese) {
     if (!chinese) return english;
     struct Entry { const char* english; const char* chinese; };
     static const Entry entries[] = {
+        {"API / Token mode","API / Token 模式"},{"No subscription quota; token usage is in Work requests.","无订阅额度；Token 用量见工作请求。"},
+        {"Codex account is signed out","Codex 账号未登录"},
         {"Quota history…","额度变化…"},{"Codex Quota — History","Codex 配额 — 变化历史"},
         {"Quota changes","额度变化"},{"Work requests","工作请求"},{"Record quota changes and request tokens","记录额度变化与请求 token"},
         {"Conversation","所属对话"},{"Unknown conversation","未知对话"},

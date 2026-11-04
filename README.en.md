@@ -10,7 +10,7 @@ It is intended for Codex desktop or CLI users who want visible quota values and 
 
 Built with C++17 and native platform interfaces, without Electron or WebView. Chinese/English can be selected in Settings and applied immediately. This is an independently running companion, not affiliated with OpenAI. See [README.md](README.md) for the Chinese guide.
 
-**[Download v3.0.0-preview.7](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.7)** · [What's new](docs/releases/v3.0.0-preview.7.en.md) · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
+**[Download v3.0.0-preview.8](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.8)** · [What's new](docs/releases/v3.0.0-preview.8.en.md) · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
 
 Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 
@@ -21,6 +21,7 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 | Feature | Details |
 | --- | --- |
 | Persistent quota display | Numeric tray icons on Windows/Linux and menu-bar text on macOS show remaining five-hour and weekly percentages. |
+| API / Token login | API keys and external providers use one clear `API` indicator and mode message. Real request tokens remain available in Work requests; subscription quotas return when supported windows are available again. |
 | Window-following strip | Optional top or left placement follows the host window. The strip appears only while a matching Codex window is foreground and hides when you switch apps; tray/menu-bar values remain available. |
 | Weekly-only display | If account data explicitly provides only weekly quota, the five-hour icon/label is hidden and the strip shrinks. A later five-hour window restores it automatically, without choosing an account type manually. |
 | Configurable auto-refresh | Queries default to every 120 seconds, adjustable from 30–3600 seconds. You can query only while the host app is open or disable online queries. |
@@ -33,6 +34,14 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 | Per-request usage | Records input, cached input, cache-write input, output, reasoning output and total tokens, reference account snapshots and status; switch between a list and token charts. Unknown actual charges show “—”. |
 | Source conversations | Shows conversation titles beside Time and identifiable parent/agent sources; retains raw IDs and picks up title changes on refresh. |
 | Single instance and cleanup | Repeated launches reuse an instance. Query subprocesses are cleaned up on completion, timeout or app exit. Windows identifies instances by Codex data directory; Linux/macOS use the user configuration directory. |
+
+### API keys and Token authentication
+
+With an API key or external provider, the tray shows one clear `API` indicator and the strip/settings show **API / Token mode**, replacing two empty quota placeholders. These logins normally do not expose ChatGPT subscription five-hour/weekly quota. The companion does not turn API balances into invented percentages.
+
+Enable **Record quota changes and request tokens**, then open **Work requests** from Settings or the tray menu to inspect input, cached input, output and total tokens actually present in local session logs, as a list or chart. Recording covers confirmed requests completed/interrupted after the listener starts. Missing data and unavailable actual charges remain `—`; consult the provider for its balance and billing.
+
+Only after quota is rejected or contains no supported window does the same short-lived app-server read its safe `account/read` summary to determine the mode. This does not read/store keys, invoke a model or add refresh polling. ChatGPT access tokens remain distinct from API keys: actual subscription windows retain the normal quota display. Network and signed-out failures still show errors.
 
 ### Understanding values and refresh
 
@@ -64,7 +73,7 @@ Open the history viewer from Settings or the tray/menu bar and select **Work req
 - Quota columns show **reference account snapshot changes**. They may include concurrent requests, and the starting snapshot may predate the request. They are not an individually attributable charge. Reset/authentication boundaries do not produce cross-boundary quota differences.
 - Local events do not provide verifiable actual charges per request: the amount is “—”, and actual amount/currency CSV fields stay empty. Subscription percentages cannot be converted into dollars; [official pricing guidance](https://learn.chatgpt.com/docs/pricing) distinguishes API token prices from subscription usage.
 - All platforms use filesystem events: initial per-file tails are limited to 256 KiB; tracked requests allow up to 8 MiB for one catch-up. Final-response text is streamed away, retaining a 32 KiB metadata-buffer limit. Gaps beyond these bounds yield partial records where identifiable; unrecoverable events may be missed, and full historical recovery is not promised. Viewing is limited to the latest 30 days, 2,000 rows/2 MiB, without additional online queries, model requests or polling.
-- History, request usage and source conversations are included in v3.0.0-preview.7. Quit the previous app before updating; settings and existing CSV files are preserved.
+- History, request usage and source conversations are included in v3.0.0-preview.8. Quit the previous app before updating; settings and existing CSV files are preserved.
 
 ### Low-resource design
 

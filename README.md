@@ -10,7 +10,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 
 程序使用 C++17 和原生系统界面，不依赖 Electron 或 WebView。中文／English 可在设置中切换并保存，立即生效。它是独立运行的辅助程序，与 OpenAI 没有官方隶属关系。英文说明见 [README.en.md](README.en.md)。
 
-**[下载 v3.0.0-preview.7](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.7)** · [本版更新](docs/releases/v3.0.0-preview.7.zh-CN.md) · [安装包选择／兼容环境／安装与卸载](docs/installers.zh-CN.md) · [Linux／macOS 构建](docs/native-desktop.zh-CN.md)
+**[下载 v3.0.0-preview.8](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.8)** · [本版更新](docs/releases/v3.0.0-preview.8.zh-CN.md) · [安装包选择／兼容环境／安装与卸载](docs/installers.zh-CN.md) · [Linux／macOS 构建](docs/native-desktop.zh-CN.md)
 
 下文的命令及详细配置主要针对 Windows；Linux／macOS 请使用上面的独立原生指南。
 
@@ -21,6 +21,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 | 功能 | 说明 |
 | --- | --- |
 | 剩余额度常驻显示 | Windows／Linux 使用数字托盘图标，macOS 使用菜单栏文字，显示 5 小时和周剩余百分比。 |
+| API／Token 登录适配 | API Key 或第三方模式改为单个 `API` 标识和模式说明；无订阅额度时可查看工作请求中的真实 Token，切回订阅后自动恢复额度显示。 |
 | 窗口跟随配额条 | 可选顶部或左侧显示，跟随宿主窗口移动；仅在匹配的 Codex 窗口处于前台时显示，切换应用后隐藏，托盘／菜单栏仍保留。 |
 | 周额度单独显示 | 账号数据明确只提供周额度时，自动隐藏 5 小时图标／标签并缩短配额条；后续提供 5 小时窗口时自动恢复，无需按账号类型手动设置。 |
 | 可调自动刷新 | 默认每 120 秒查询，可设为 30–3600 秒；支持仅在宿主应用运行时定时查询，也可关闭在线查询。 |
@@ -33,6 +34,14 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 | 每次工作请求用量 | 汇总输入、缓存输入、缓存写入、输出、推理输出和总 Token，记录参考额度快照与状态；可切换列表／Token 图表，未知实际金额显示“—”。 |
 | 请求所属对话 | 时间后直接显示对话标题，能确认的子代理请求显示父对话及代理名；保留原始 ID，刷新可更新重命名后的标题。 |
 | 单实例与退出清理 | 重复启动复用已有实例；查询子进程在完成、超时或程序退出时清理。Windows 按 Codex 数据目录区分实例，Linux／macOS 按用户配置目录区分。 |
+
+### API Key／Token 登录
+
+使用 API Key 或第三方 Token 时，托盘显示一个清晰的 `API` 标识，悬浮条和设置显示 **API / Token 模式**，不再保留两个空额度占位。此类登录通常不提供 ChatGPT 订阅的 5 小时／周剩余额度；本程序不会把 API 余额推算成百分比。
+
+启用“记录额度与工作请求”后，从托盘菜单或设置打开“工作请求”，查看会话日志实际提供的输入、缓存、输出与总 Token，可切换列表／图表。只统计监听器开始后完成或中断、且日志可确认的请求；缺失数据和未提供的真实费用显示 `—`。第三方平台余额和账单以其后台为准。
+
+程序仅在额度查询被拒绝或没有支持窗口时，通过同一短生命周期 app-server 的 `account/read` 安全摘要确认登录类型，不读取或保存密钥，不调用模型，也不新增刷新轮询。ChatGPT 访问令牌与 API Key 分开处理：只要实际返回订阅窗口，仍显示原有额度。查询失败和未登录继续显示对应错误。
 
 ### 显示与刷新说明
 
@@ -64,7 +73,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 - 额度列是**账户参考快照变化**，可能包含并发请求，起点快照也可能早于请求开始；它不是单请求独立扣费，周期重置或认证切换不计算跨边界差值。
 - 本地事件没有可验证的逐请求实际金额，金额显示“—”，CSV 的实际金额／币种留空。Pro／Plus 订阅百分比不能换算为美元；[官方计价说明](https://learn.chatgpt.com/docs/pricing)区分 API Token 计价与订阅使用量。
 - 三平台使用文件事件监听，初读单文件最多最新 256 KiB；已追踪请求允许最多 8 MiB 的一次追赶，最终回复正文流式跳过、元数据缓冲上限仍为 32 KiB。超过读取上限时只保留仍可解析的部分记录，无法恢复的事件可能遗漏；不承诺恢复未监听时的全部历史。查看记录沿用最近 30 天、2000 行／2 MiB 上限，不增加在线配额查询、模型请求或后台轮询。
-- 历史、请求用量与所属对话功能均包含在 v3.0.0-preview.7 下载包中。升级前退出旧程序；设置和原有 CSV 保留。
+- 历史、请求用量与所属对话功能均包含在 v3.0.0-preview.8 下载包中。升级前退出旧程序；设置和原有 CSV 保留。
 
 ### 低资源占用设计
 

@@ -21,13 +21,23 @@ int main() {
         if (line.find("\"initialize\"") != std::string::npos) {
             std::cout << "{\"id\":1,\"result\":{}}\n" << std::flush;
         } else if (line.find("account/rateLimits/read") != std::string::npos) {
-            if (mode == "error") std::cout << "{\"id\":2,\"error\":{\"message\":\"private-account-text\"}}\n" << std::flush;
+            if (mode == "api-key" || mode == "external" || mode == "chatgpt-token" || mode == "signed-out" || mode == "legacy-account") std::cout << "{\"id\":2,\"error\":{\"message\":\"quota unavailable\"}}\n" << std::flush;
+            else if (mode == "api-empty") std::cout << "{\"id\":2,\"result\":{\"rateLimits\":{\"limitId\":\"codex\"}}}\n" << std::flush;
+            else if (mode == "error") std::cout << "{\"id\":2,\"error\":{\"message\":\"private-account-text\"}}\n" << std::flush;
             else if (mode == "giant") std::cout << std::string(60000, 'x') << '\n' << std::flush;
             else {
                 std::cout << "{\"method\":\"notification\",\"params\":{}}\n{\"id\":2,\"result\":{\"rateLimits\":{\"limitId\":\"codex\",\"primary\":{\"usedPercent\":20,\"windowDurationMins\":300}," << std::flush;
                 usleep(10000);
                 std::cout << "\"secondary\":{\"usedPercent\":88,\"windowDurationMins\":10080}}}}\n" << std::flush;
             }
+        } else if (line.find("account/read") != std::string::npos) {
+            // 只允许同一 app-server 的只读模式查询，测试禁止刷新 token 或凭据读取。
+            if (line.find("\"id\":3") == std::string::npos || line.find("\"refreshToken\":false") == std::string::npos) return 14;
+            if (mode == "api-key" || mode == "api-empty") std::cout << "{\"id\":3,\"result\":{\"account\":{\"type\":\"apiKey\"},\"requiresOpenaiAuth\":true}}\n" << std::flush;
+            else if (mode == "external") std::cout << "{\"id\":3,\"result\":{\"account\":null,\"requiresOpenaiAuth\":false}}\n" << std::flush;
+            else if (mode == "chatgpt-token") std::cout << "{\"id\":3,\"result\":{\"account\":{\"type\":\"chatgpt\",\"email\":\"synthetic@example.invalid\",\"planType\":\"plus\"},\"requiresOpenaiAuth\":true}}\n" << std::flush;
+            else if (mode == "signed-out") std::cout << "{\"id\":3,\"result\":{\"account\":null,\"requiresOpenaiAuth\":true}}\n" << std::flush;
+            else std::cout << "{\"id\":3,\"error\":{\"message\":\"private-account-text\"}}\n" << std::flush;
         }
     }
 }

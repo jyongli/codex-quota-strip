@@ -22,7 +22,14 @@ int main(int argc, char** argv) {
     try {
         auto result = query("success");
         require(result.ok && result.snapshot.fiveHour.used == 20 && result.snapshot.weekly.used == 88, "Real stdio query must accept fragmented rate-limit response");
-        require(result.snapshot.observed > 0, "Successful result must have observation time");
+        require(result.snapshot.observed > 0 && result.accountMode == quota::AccountMode::Subscription, "Successful result must have subscription mode and observation time");
+        // 无额度 RPC 不应把 API 登录当作故障；缺少模式回退时第一条断言会失败。
+        result = query("api-key"); require(result.ok && result.accountMode == quota::AccountMode::ApiKey && !result.snapshot.fiveHour.present && !result.snapshot.weekly.present && !result.snapshot.observed && result.error.empty(), "API-key login must succeed without fabricated subscription quota");
+        result = query("api-empty"); require(result.ok && !result.snapshot.observed, "Empty supported windows must fall back to API account mode");
+        result = query("external"); require(result.ok && result.accountMode == quota::AccountMode::ExternalProvider && !result.snapshot.observed, "External provider must succeed without subscription quota");
+        result = query("chatgpt-token"); require(!result.ok && result.accountMode == quota::AccountMode::Subscription, "ChatGPT access-token login must remain a subscription when quota RPC fails");
+        result = query("signed-out"); require(!result.ok && result.accountMode == quota::AccountMode::SignedOut && result.error == "Codex account is signed out", "Signed-out mode must return a clear error");
+        result = query("legacy-account"); require(!result.ok && result.accountMode == quota::AccountMode::Unknown && result.error.find("private-account-text") == std::string::npos, "Older app-server account/read errors must stay unknown and redact private messages");
         for(auto name:{"HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY","http_proxy","https_proxy","all_proxy","no_proxy"})setenv(name,"stale-parent-proxy",1);
         unsetenv("QUOTA_CONFIG_SECRET");
         {std::ofstream file(fixture.home/"config.toml");file<<"[shell_environment_policy.set]\nhttp_proxy='http://127.0.0.1:23456'\nHTTPS_PROXY='http://127.0.0.1:23456'\nALL_PROXY='socks5://127.0.0.1:23457'\nNO_PROXY=''\nQUOTA_CONFIG_SECRET='not-injected'\n";}

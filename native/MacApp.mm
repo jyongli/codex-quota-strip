@@ -118,6 +118,7 @@ static NSString* HistoryDelta(const std::optional<double>& value) { return value
     AXUIElementRef application, focused;
     pid_t observedPid;
     bool lastWeeklyOnly;
+    bool lastApiMode;
     std::filesystem::path configRoot;
     dispatch_source_t terminateSignal, interruptSignal;
 }
@@ -291,7 +292,8 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (AXUIElementCopyAttributeValue(focused, kAXMinimizedAttribute, &minimized) == kAXErrorSuccess && minimized == kCFBooleanTrue) valid = false;
     if (point) CFRelease(point); if (size) CFRelease(size); if (minimized) CFRelease(minimized);
     if (!valid || dimensions.width < 100 || dimensions.height < 40) { [strip orderOut:nil]; return; }
-    auto frame = Placement({origin.x, origin.y, dimensions.width, dimensions.height}, engine->preferences().left, quota::WeeklyOnly(engine->state().snapshot));
+    auto current = engine->state(); auto preferences = engine->preferences();
+    auto frame = Placement({origin.x, origin.y, dimensions.width, dimensions.height}, preferences.left, quota::WeeklyOnly(current.snapshot) || (preferences.left && quota::NoSubscriptionQuota(current.accountMode)));
     // AX 使用主屏左上角坐标；AppKit 窗口使用左下角坐标，保留跨屏的全局 X/Y。
     double mainHeight = NSMaxY([NSScreen screens].firstObject.frame);
     [strip setFrame:NSMakeRect(frame.x, mainHeight - frame.y - frame.height, frame.width, frame.height) display:YES];
@@ -301,13 +303,16 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (!engine) return;
     auto current = engine->state(); auto prefs = engine->preferences(); auto now = NowMs(); auto text = Summary(current, prefs, now);
     statusItem.button.title = Text(text);
+    const bool api = quota::NoSubscriptionQuota(current.accountMode);
+    statusItem.button.toolTip = api ? [self ui:@"No subscription quota; token usage is in Work requests."] : nil;
     bool weeklyOnly = quota::WeeklyOnly(current.snapshot);
-    std::string panel = prefs.left ? (weeklyOnly ? "" : "5h\n" + Remaining(current.snapshot.fiveHour, now) + "\n") + "W\n" + Remaining(current.snapshot.weekly, now) : text;
-    stripText.stringValue = Text(panel); stripText.maximumNumberOfLines = prefs.left ? 4 : 1;
+    std::string panel = api ? (prefs.left ? "API\nToken" : text) : prefs.left ? (weeklyOnly ? "" : "5h\n" + Remaining(current.snapshot.fiveHour, now) + "\n") + "W\n" + Remaining(current.snapshot.weekly, now) : text;
+    stripText.stringValue = Text(panel); stripText.maximumNumberOfLines = prefs.left ? (api ? 2 : 4) : 1;
     stripText.textColor = Stale(current, prefs, now) ? NSColor.lightGrayColor : NSColor.whiteColor;
-    if (lastWeeklyOnly != weeklyOnly) { lastWeeklyOnly = weeklyOnly; [self updateHost]; }
+    if (lastWeeklyOnly != weeklyOnly || lastApiMode != api) { lastWeeklyOnly = weeklyOnly; lastApiMode = api; [self updateHost]; }
     if (status) {
         std::string detail = text + "\n" + Translate(current.refreshing ? "Refreshing…" : !current.error.empty() ? current.error.c_str() : !prefs.online ? "Online queries disabled" : "Account quota",prefs.chinese);
+        if (api) detail += "\n" + std::string(Translate("No subscription quota; token usage is in Work requests.", prefs.chinese));
         if (!current.historyError.empty()) detail += "\n" + std::string(Translate(current.historyError.c_str(), prefs.chinese));
         if (!current.requestError.empty()) detail += "\n" + std::string(Translate(current.requestError.c_str(), prefs.chinese));
         if (!options.smoke && prefs.overlay && !AXIsProcessTrusted()) detail += Translate("\nAllow Accessibility access to follow Codex windows.",prefs.chinese);
