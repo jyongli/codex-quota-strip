@@ -1,5 +1,6 @@
 #pragma once
 #include "../source/QuotaCore.h"
+#include "../source/AccountMode.h"
 #include "../source/QuotaHistory.h"
 #include "../source/RequestUsage.h"
 #include <atomic>
@@ -22,6 +23,7 @@ struct Preferences {
 };
 struct State {
     quota::Snapshot snapshot;
+    quota::AccountMode accountMode = quota::AccountMode::Unknown;
     bool refreshing = false;
     std::string error;
     std::string historyError;
@@ -31,6 +33,7 @@ struct Rect { double x = 0, y = 0, width = 0, height = 0; };
 struct QueryResult {
     bool ok = false;
     quota::Snapshot snapshot;
+    quota::AccountMode accountMode = quota::AccountMode::Unknown;
     std::string error;
     int childPid = 0;
 };

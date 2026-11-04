@@ -170,37 +170,46 @@ struct App {
         auto extents = property(next, XInternAtom(display, "_NET_FRAME_EXTENTS", False), XA_CARDINAL);
         int left = extents.size() >= 4 ? static_cast<int>(extents[0]) : 0, top = extents.size() >= 4 ? static_cast<int>(extents[2]) : 0;
         double scale = std::max(1, gtk_widget_get_scale_factor(strip));
-        auto placement = Placement({(x - left) / scale, (y - top) / scale, frame.width / scale, (frame.height + top) / scale}, prefs.left, quota::WeeklyOnly(engine.state().snapshot));
+        auto current = engine.state();
+        auto placement = Placement({(x - left) / scale, (y - top) / scale, frame.width / scale, (frame.height + top) / scale}, prefs.left, quota::WeeklyOnly(current.snapshot) || (prefs.left && quota::NoSubscriptionQuota(current.accountMode)));
         gtk_window_move(GTK_WINDOW(strip), static_cast<int>(placement.x), static_cast<int>(placement.y));
         gtk_window_resize(GTK_WINDOW(strip), static_cast<int>(placement.width), static_cast<int>(placement.height)); gtk_widget_show_all(strip);
         // 配额条不接收鼠标，拖动/点击仍交给下方 Codex 窗口。
         if (auto window = gtk_widget_get_window(strip)) { auto empty = cairo_region_create(); gdk_window_input_shape_combine_region(window, empty, 0, 0); cairo_region_destroy(empty); }
     }
-    void icon(int index, const std::string& value, bool old) {
+    void icon(int index, const std::string& value, bool old, bool api = false) {
         auto image = cache / (std::to_string(index) + "-" + std::to_string(iconGeneration % 2) + ".png");
         auto surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 32, 32); auto context = cairo_create(surface);
         cairo_set_operator(context, CAIRO_OPERATOR_SOURCE); cairo_set_source_rgba(context, 0, 0, 0, 0); cairo_paint(context); cairo_set_operator(context, CAIRO_OPERATOR_OVER);
         cairo_select_font_face(context, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
         cairo_set_source_rgb(context, old ? .65 : index ? .38 : .37, old ? .65 : .82, old ? .65 : index ? .64 : .95);
-        cairo_set_font_size(context, 9); cairo_move_to(context, 9, 10); cairo_show_text(context, index ? "W" : "5h");
+        if (!api) { cairo_set_font_size(context, 9); cairo_move_to(context, 9, 10); cairo_show_text(context, index ? "W" : "5h"); }
         auto digits = value; if (!digits.empty() && digits.back() == '%') digits.pop_back();
         cairo_set_font_size(context, digits.size() > 3 ? 12 : 16); cairo_text_extents_t size{}; cairo_text_extents(context, digits.c_str(), &size);
-        cairo_move_to(context, (32 - size.width) / 2 - size.x_bearing, 29); cairo_show_text(context, digits.c_str());
+        cairo_move_to(context, (32 - size.width) / 2 - size.x_bearing, api ? 22 : 29); cairo_show_text(context, digits.c_str());
         cairo_surface_write_to_png(surface, image.c_str()); cairo_destroy(context); cairo_surface_destroy(surface);
         app_indicator_set_icon_full(indicators[index], image.c_str(), value.c_str());
     }
     void paint() {
         auto state = engine.state(); auto prefs = engine.preferences(); auto now = NowMs(); auto summary = Summary(state, prefs, now);
+        const bool api = quota::NoSubscriptionQuota(state.accountMode);
         bool changed = summary != lastSummary;
         if (changed) {
-            app_indicator_set_status(indicators[0], quota::WeeklyOnly(state.snapshot) ? APP_INDICATOR_STATUS_PASSIVE : APP_INDICATOR_STATUS_ACTIVE);
-            ++iconGeneration; icon(0, Remaining(state.snapshot.fiveHour, now), Stale(state, prefs, now)); icon(1, Remaining(state.snapshot.weekly, now), Stale(state, prefs, now)); lastSummary = summary;
+            // API 模式只显示一个清晰标识；恢复订阅时重新启用数值指标。
+            app_indicator_set_status(indicators[0], !api && quota::WeeklyOnly(state.snapshot) ? APP_INDICATOR_STATUS_PASSIVE : APP_INDICATOR_STATUS_ACTIVE);
+            app_indicator_set_status(indicators[1], api ? APP_INDICATOR_STATUS_PASSIVE : APP_INDICATOR_STATUS_ACTIVE);
+            app_indicator_set_title(indicators[0], ui(api ? "API / Token mode" : "Codex five-hour remaining quota"));
+            ++iconGeneration;
+            if (api) icon(0, "API", false, true);
+            else { icon(0, Remaining(state.snapshot.fiveHour, now), Stale(state, prefs, now)); icon(1, Remaining(state.snapshot.weekly, now), Stale(state, prefs, now)); }
+            lastSummary = summary;
         }
-        std::string text = prefs.left ? (quota::WeeklyOnly(state.snapshot) ? "" : "5h\n" + Remaining(state.snapshot.fiveHour, now) + "\n") + "W\n" + Remaining(state.snapshot.weekly, now) : summary;
+        std::string text = api ? (prefs.left ? "API\nToken" : summary) : prefs.left ? (quota::WeeklyOnly(state.snapshot) ? "" : "5h\n" + Remaining(state.snapshot.fiveHour, now) + "\n") + "W\n" + Remaining(state.snapshot.weekly, now) : summary;
         gtk_label_set_text(GTK_LABEL(stripText), text.c_str());
         if (changed) position();
         if (status) {
             std::string message = summary + "\n" + (state.refreshing ? ui("Refreshing…") : !state.error.empty() ? ui(state.error.c_str()) : !prefs.online ? ui("Online queries disabled") : ui("Account quota"));
+            if (api) message += "\n" + std::string(ui("No subscription quota; token usage is in Work requests."));
             if (!state.historyError.empty()) message += "\n" + std::string(ui(state.historyError.c_str()));
             if (!state.requestError.empty()) message += "\n" + std::string(ui(state.requestError.c_str()));
             if (!x11) message += ui("\nWayland: overlay/host detection unavailable. Scheduling uses the interval.");

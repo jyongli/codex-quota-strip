@@ -1,4 +1,5 @@
 #include "QuotaFiles.h"
+#include "AccountMode.h"
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -6,6 +7,13 @@
 void check(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
 int main() {
     try {
+        auto mode=[](const char* response){return quota::ReadAccountMode(quota::JsonParser(std::string(response)).parse());};
+        check(mode(R"({"account":{"type":"apiKey"},"requiresOpenaiAuth":true})")==quota::AccountMode::ApiKey,"API key must be identified from the safe account summary");
+        check(mode(R"({"account":{"type":"chatgpt"},"requiresOpenaiAuth":false})")==quota::AccountMode::ExternalProvider,"Active external provider must override stored ChatGPT login");
+        check(mode(R"({"account":{"type":"chatgptAuthTokens"},"requiresOpenaiAuth":true})")==quota::AccountMode::Subscription,"ChatGPT auth tokens must retain subscription quotas");
+        check(mode(R"({"account":null,"requiresOpenaiAuth":true})")==quota::AccountMode::SignedOut,"Explicit signed-out state must not be mistaken for API login");
+        check(mode(R"({"account":{"type":"futureAuth"}})")==quota::AccountMode::Unknown&&mode("{}")==quota::AccountMode::Unknown,"Unknown auth replies must not invent an API login");
+        std::cout<<"PASS: safe account classification, external provider precedence and ChatGPT Token distinction\n";
         quota::Snapshot s;
         check(quota::ParseEvent(R"({"timestamp":"2026-09-30T13:00:00.000Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":88,"window_minutes":10080,"resets_at":1791046711},"secondary":null}}})", s), "A real quota event must be accepted");
         check(s.weekly.present && s.weekly.used == 88, "Weekly quota must be identified by duration even when primary");

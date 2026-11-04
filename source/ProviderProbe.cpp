@@ -36,9 +36,9 @@ bool ChildExited(DWORD pid) {
 void PrintResult(const wchar_t* mode, const quota::ProviderResult& result) {
     const double five = result.snapshot.fiveHour.present ? 100.0 - result.snapshot.fiveHour.used : -1.0;
     const double weekly = result.snapshot.weekly.present ? 100.0 - result.snapshot.weekly.used : -1.0;
-    std::wprintf(L"mode=%ls ok=%d five_hour_remaining=%.1f weekly_remaining=%.1f elapsed_ms=%llu spawned=%d child_exited=%d\n",
+    std::wprintf(L"mode=%ls ok=%d five_hour_remaining=%.1f weekly_remaining=%.1f elapsed_ms=%llu spawned=%d child_exited=%d account_mode=%hs\n",
         mode, result.ok ? 1 : 0, five, weekly, result.elapsedMs,
-        result.childPid ? 1 : 0, ChildExited(result.childPid) ? 1 : 0);
+        result.childPid ? 1 : 0, ChildExited(result.childPid) ? 1 : 0,quota::AccountModeId(result.accountMode));
 }
 
 } // namespace

@@ -541,6 +541,21 @@ ProviderResult ReadAccountQuota(const std::wstring& exe, const std::wstring& hom
         }
 
         state = WaitForResponse(outputRead.get(), process.get(), cancel, deadline, reader, 2, true, response);
+        bool supported=state==ReceiveState::Result&&ReadLimits(response,result.snapshot)&&
+            (result.snapshot.fiveHour.present||result.snapshot.weekly.present);
+        if(!supported&&(state==ReceiveState::Result||state==ReceiveState::RemoteError)){
+            // API/第三方认证不提供订阅额度；在同一短进程中核对类型，避免把正常登录误报为网络失败。
+            const auto originalState=state;
+            static constexpr char readAccount[]="{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"account/read\",\"params\":{\"refreshToken\":false}}\n";
+            if(WriteRequest(inputWrite.get(),readAccount,sizeof(readAccount)-1)&&
+               WaitForResponse(outputRead.get(),process.get(),cancel,deadline,reader,3,true,response)==ReceiveState::Result){
+                result.accountMode=ReadAccountMode(response);
+                if(NoSubscriptionQuota(result.accountMode)){result.snapshot={};tree.stop();return finish();}
+                if(result.accountMode==AccountMode::SignedOut){result.snapshot={};tree.stop();return finish(L"尚未登录 Codex，请先登录后刷新");}
+            }
+            tree.stop();
+            return finish(originalState==ReceiveState::Result?L"Codex app-server 未返回额度数据":ErrorText(originalState,false));
+        }
         if (state != ReceiveState::Result) {
             tree.stop();
             return finish(ErrorText(state, false));
@@ -550,6 +565,7 @@ ProviderResult ReadAccountQuota(const std::wstring& exe, const std::wstring& hom
             return finish(L"Codex app-server 未返回额度数据");
         }
         result.snapshot.observed = NowMs();
+        result.accountMode=AccountMode::Subscription;
         tree.stop();
         return finish();
     } catch (...) {

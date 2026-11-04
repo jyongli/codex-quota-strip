@@ -1,4 +1,6 @@
 #include "../source/QuotaCore.h"
+#include "../source/AccountMode.h"
+#include "Localization.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -12,6 +14,9 @@ int main() {
         require(result.weekly.present && result.weekly.used == 88 && result.fiveHour.present && result.fiveHour.used == 20, "Quota windows must map by duration");
         require(quota::Remaining({}) == L"-", "Missing values must display a dash");
         require(quota::Remaining(result.fiveHour) == L"80%", "Remaining value must be 100 minus used");
+        require(quota::NoSubscriptionQuota(quota::ReadAccountMode(quota::JsonParser(R"({"account":{"type":"apiKey"},"requiresOpenaiAuth":true})").parse())), "API-key account summary must be explicitly quota-free");
+        require(!quota::NoSubscriptionQuota(quota::ReadAccountMode(quota::JsonParser(R"({"account":{"type":"chatgptAuthTokens"},"requiresOpenaiAuth":true})").parse())), "ChatGPT token authentication must retain subscription semantics");
+        require(std::string(nativequota::Translate("API / Token mode", true)) == "API / Token 模式" && std::string(nativequota::Translate("Codex account is signed out", true)) == "Codex 账号未登录", "Native account-mode and signed-out labels must translate");
         require(!quota::WeeklyOnly(result), "Unknown startup must retain five-hour placeholder");
         result.observed = 1; result.fiveHour.present = false;
         require(quota::WeeklyOnly(result), "Confirmed weekly-only data must hide five-hour UI");

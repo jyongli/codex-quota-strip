@@ -7,6 +7,13 @@ inline const wchar_t* Translate(const wchar_t* chinese, bool english) {
     if (!english) return chinese;
     struct Text { const wchar_t* chinese; const wchar_t* english; };
     static const Text entries[] = {
+        {L"API / Token 模式",L"API / Token mode"},
+        {L"API / Token · 用量见工作请求",L"API / Token · see Work requests"},
+        {L"无订阅额度；Token 用量见工作请求。",L"No subscription quota; see Work requests for tokens."},
+        {L"右键打开工作请求或配置",L"Right-click for Work requests or Settings"},
+        {L"当前连接方式",L"Connection mode"},
+        {L"登录状态检查失败：",L"Login status check failed: "},
+        {L"尚未登录 Codex，请先登录后刷新",L"Not signed in to Codex; sign in and refresh"},
         {L"Codex 配额",L"Codex Quota"},{L"Codex 配额 — 配置",L"Codex Quota — Settings"},
         {L"刷新与显示设置",L"Refresh and display settings"},{L"5 小时剩余",L"Five-hour remaining"},{L"本周剩余",L"Weekly remaining"},
         {L"自动刷新",L"Automatic refresh"},{L"按设定间隔获取账户最新额度",L"Fetch current account quota at the selected interval"},

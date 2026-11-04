@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v3.0.0-preview.8 — 2026-11-04
+
+- API Key／第三方 Token 登录显示单个 API 托盘标识及双语模式说明，工作请求仍可查看真实 Token；切换订阅／未登录时清除旧模式，区分网络失败，不新增轮询或推理请求。 / Show a single API indicator and bilingual mode explanation for API-key/external-provider login, retain real tokens in Work requests, restore subscription/logout states and distinguish network failures without new polling or inference.
+
 ## v3.0.0-preview.7 — 2026-10-26
 
 - 新增原创矢量应用图标，统一 Windows 程序／窗口／安装器、Linux 桌面入口和 macOS 应用包；保留独立的实时额度数字指示。 / Add original vector application artwork across Windows executables/windows/setup, Linux launchers and the macOS bundle, retaining live numeric quota indicators.

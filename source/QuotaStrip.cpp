@@ -24,6 +24,7 @@ namespace {
 constexpr UINT StateChanged = WM_APP + 1, HostChanged = WM_APP + 2, TrayMessage = WM_APP + 3;
 constexpr UINT_PTR ExpiryTimer = 1, RecoveryTimer = 2;
 struct Data {
+    quota::AccountMode accountMode=quota::AccountMode::Unknown;
     quota::Snapshot snapshot;
     quota::Snapshot localSnapshot;
     unsigned long long events = 0, bytesRead = 0, notifications = 0;
@@ -119,7 +120,7 @@ unsigned long long ObserveAuthLocked(){
     authMetadataKnown=true;authPresent=present;authMetadataError=error;authMetadata=current;
     if(changed){
         authBoundaryMs=quota::NowMs();
-        ++accountGeneration;historyStore.reset();data.snapshot={};data.localSnapshot={};data.error=0;data.fromServer=false;data.lastSuccess=0;data.queryError.clear();
+        ++accountGeneration;historyStore.reset();data.snapshot={};data.localSnapshot={};data.accountMode=quota::AccountMode::Unknown;data.error=0;data.fromServer=false;data.lastSuccess=0;data.queryError.clear();
     }
     return accountGeneration.load();
 }
@@ -148,6 +149,7 @@ bool WriteStatus(const Data& s) {
     auto number = [](const quota::Window& w) { return w.present ? std::to_string(std::clamp(100.0 - w.used, 0.0, 100.0)) : std::string("null"); };
     json += number(five) + ",\"weekly_remaining\":" + number(week);
     json += ",\"observed_ms\":" + std::to_string(s.snapshot.observed);
+    json += ",\"account_mode\":\""+std::string(quota::AccountModeId(s.accountMode))+"\"";
     auto config=GetPreferences();
     json += ",\"refresh_seconds\":"+std::to_string(config.intervalSeconds)+",\"stale_minutes\":"+std::to_string(config.staleMinutes);
     json += ",\"online\":"+std::string(config.online?"true":"false")+",\"refreshing\":"+std::string(s.refreshing?"true":"false");
@@ -218,7 +220,7 @@ void WatchFiles() {
         std::lock_guard<std::mutex> lock(dataMutex);
         if(quota::Apply(snapshot,data.localSnapshot))++data.events;
         // 本地事件时间是写盘时间，不保证配额字段新鲜；在线成功后只用账户结果。
-        if((!online||!data.lastSuccess)&&quota::Apply(snapshot,data.snapshot)){
+        if(!quota::NoSubscriptionQuota(data.accountMode)&&data.accountMode!=quota::AccountMode::SignedOut&&(!online||!data.lastSuccess)&&quota::Apply(snapshot,data.snapshot)){
             data.fromServer=false;
             // 只记录真正采纳的额度事件；UI 重绘、过期提示与文件重扫不产生新记录。
             historyStore.record(snapshot,"local-event");
@@ -393,8 +395,8 @@ void PositionStrip() {
     bool ownerChanged = GetWindow(window, GW_OWNER) != host;
     if (ownerChanged) SetWindowLongPtrW(window, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(host));
     UpdateFonts(GetDpiForWindow(usableHost ? host : window));
-    bool weeklyOnly = quota::WeeklyOnly(GetData().snapshot);
-    int width = px(leftSide ? 44 : weeklyOnly ? 116 : 236), height = px(leftSide ? weeklyOnly ? 56 : 110 : 26);
+    auto current=GetData();bool weeklyOnly = quota::WeeklyOnly(current.snapshot),tokenMode=quota::NoSubscriptionQuota(current.accountMode);
+    int width = px(leftSide ? 44 : weeklyOnly ? 116 : 236), height = px(leftSide ? weeklyOnly||tokenMode ? 56 : 110 : 26);
     int x = lastPlacement.left, y = lastPlacement.top;
     if (usableHost) {
         RECT rect{};
@@ -435,7 +437,13 @@ void PaintStrip(HDC target) {
     auto pen = CreatePen(PS_SOLID, px(1), RGB(65,65,65)); auto oldPen = SelectObject(dc, pen); auto oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
     RoundRect(dc, 0, 0, r.right, r.bottom, px(9), px(9));
     SelectObject(dc, oldBrush); SelectObject(dc, oldPen); DeleteObject(pen);
-    if (quota::WeeklyOnly(s.snapshot)) {
+    if(quota::NoSubscriptionQuota(s.accountMode)){
+        // 未提供订阅额度时显示可辨识的模式文字，不把缺失值伪装成 0% 或余额。
+        if(leftSide){
+            DrawTextAt(dc,L"API",{0,px(5),r.right,px(26)},font,RGB(145,210,185),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+            DrawTextAt(dc,L"Token",{0,px(27),r.right,px(51)},smallFont,RGB(205,205,205),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        }else DrawTextAt(dc,Ui(L"API / Token · 用量见工作请求"),{px(9),0,r.right-px(9),r.bottom},smallFont,RGB(145,210,185),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    }else if (quota::WeeklyOnly(s.snapshot)) {
         if (leftSide) {
             DrawTextAt(dc, Ui(L"周"), {0,px(5),r.right,px(25)}, smallFont, RGB(167,167,167), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             DrawTextAt(dc, quota::Remaining(week), {0,px(27),r.right,px(51)}, smallFont, NumberColor(week, stale), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -464,6 +472,7 @@ void UpdateTray(const Data& s, bool force = false) {
     auto now = quota::NowMs();
     quota::Window values[]{CurrentWindow(s.snapshot.fiveHour, now),CurrentWindow(s.snapshot.weekly, now)};
     bool stale = IsStale(s,now);
+    bool tokenMode=quota::NoSubscriptionQuota(s.accountMode);
     int size = std::max(32, GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem()) * 2);
     const wchar_t* captions[]{L"5h",L"W"};
     const wchar_t* names[]{Ui(L"5小时"),Ui(L"周")};
@@ -474,7 +483,7 @@ void UpdateTray(const Data& s, bool force = false) {
         trayIdentity = quota::MetricIdentity(home, module); return trayIdentity;
     }();
     for (int i = 0; i < 2; ++i) {
-        if (i == 0 && quota::WeeklyOnly(s.snapshot)) {
+        if ((i == 0 && quota::WeeklyOnly(s.snapshot))||(tokenMode&&i==1)) {
             if (trayAdded[i]) Shell_NotifyIconW(NIM_DELETE, &trays[i]);
             if (trays[i].hIcon) DestroyIcon(trays[i].hIcon);
             trays[i].hIcon = nullptr; trayAdded[i] = false; trayValues[i].clear(); trayRenderKeys[i].clear(); trayTips[i].clear();
@@ -482,15 +491,19 @@ void UpdateTray(const Data& s, bool force = false) {
         }
         std::wstring full = quota::Remaining(values[i]), value = full;
         if (!value.empty() && value.back() == L'%') value.pop_back();
+        if(tokenMode)value=L"API";
         std::wstring key = value + (stale ? L"/stale/" : L"/fresh/") + std::to_wstring(size);
         std::wstring tip = std::wstring(L"Codex ") + names[i] + Ui(L"剩余 ") + full + Ui(L"\n最后事件：") + LocalTime(s.snapshot.observed);
         if (values[i].resets) tip += Ui(L"\n重置：") + LocalTime(values[i].resets * 1000);
         if (stale && values[i].present) tip += Ui(L"\n旧快照，等待本机新事件");
         if (!values[i].present) tip += Ui(L"\n服务未提供此窗口，或等待重置后的新事件");
+        if(tokenMode)tip=std::wstring(Ui(L"API / Token 模式"))+L"\n"+Ui(L"无订阅额度；Token 用量见工作请求。")+L"\n"+Ui(L"右键打开工作请求或配置");
+        if(tokenMode&&!s.queryError.empty())tip+=L"\n"+std::wstring(Ui(L"登录状态检查失败："))+Ui(s.queryError.c_str());
         if (!force && trayAdded[i] && key == trayRenderKeys[i] && tip == trayTips[i]) continue;
         bool redraw = force || key != trayRenderKeys[i] || !trays[i].hIcon;
         COLORREF tint = !values[i].present || stale ? RGB(175,175,175) : 100 - values[i].used <= 20 ? RGB(246,183,92) : i == 0 ? RGB(100,190,245) : RGB(105,210,160);
-        HICON image = redraw ? quota::MetricIcon(size, captions[i], value, tint) : trays[i].hIcon;
+        if(tokenMode)tint=RGB(145,210,185);
+        HICON image = redraw ? quota::MetricIcon(size, tokenMode?L"":captions[i], value, tint) : trays[i].hIcon;
         if (!image) continue;
         auto next = trays[i]; next.cbSize = sizeof(next); next.hWnd = controller; next.uID = i + 1;
         next.guidItem = quota::MetricGuid(hash, next.uID); next.uCallbackMessage = TrayMessage; next.hIcon = image;
@@ -532,7 +545,8 @@ void UpdateState() {
     auto s = GetData(); auto now = quota::NowMs();
     auto five = CurrentWindow(s.snapshot.fiveHour, now), week = CurrentWindow(s.snapshot.weekly, now);
     bool stale = IsStale(s,now);
-    std::wstring text = quota::Remaining(five) + L"/" + quota::Remaining(week) + (stale ? L"/stale" : L"");
+    bool tokenMode=quota::NoSubscriptionQuota(s.accountMode);
+    std::wstring text = tokenMode?Ui(L"API / Token · 用量见工作请求"):quota::Remaining(five) + L"/" + quota::Remaining(week) + (stale ? L"/stale" : L"");
     bool displayChanged = text != paintedText;
     if (displayChanged) { paintedText = text; if(window)InvalidateRect(window, nullptr, FALSE); }
     tipText = quota::WeeklyOnly(s.snapshot) ? Ui(L"剩余配额：周 ") + quota::Remaining(week) : Ui(L"剩余配额：5小时 ") + quota::Remaining(five) + Ui(L"；周 ") + quota::Remaining(week);
@@ -542,6 +556,8 @@ void UpdateState() {
     if (five.resets) tipText += Ui(L"\n5小时重置时间：") + LocalTime(five.resets * 1000);
     if (week.resets) tipText += Ui(L"\n周重置时间：") + LocalTime(week.resets * 1000);
     if (stale) tipText += Ui(L"\n灰色数值是旧快照，等待本机新事件。");
+    if(tokenMode)tipText=std::wstring(Ui(L"API / Token 模式"))+L"\n"+Ui(L"无订阅额度；Token 用量见工作请求。");
+    if(tokenMode&&!s.queryError.empty())tipText+=L"\n"+std::wstring(Ui(L"登录状态检查失败："))+Ui(s.queryError.c_str());
     if (s.error) tipText += Ui(L"\n本机日志监听不可用，错误码：") + std::to_wstring(s.error);
     auto historyError=HistoryError(historyStore.error());if(!historyError.empty())tipText+=L"\n"+historyError;
     auto requestError=RequestError(requestStore.error());if(!requestError.empty())tipText+=L"\n"+requestError;
@@ -558,8 +574,11 @@ void UpdateState() {
         if(s.refreshing)summary+=Ui(L" · 正在刷新");
         else if(!s.queryError.empty())summary=std::wstring(Ui(L"刷新失败 · "))+Ui(s.queryError.c_str())+Ui(L"，保留上次数据");
         else if(stale)summary+=Ui(L" · 等待新数据");
+        if(tokenMode){summary=Ui(L"无订阅额度；Token 用量见工作请求。");if(!s.queryError.empty())summary=std::wstring(Ui(L"登录状态检查失败："))+Ui(s.queryError.c_str());}
+        // 恢复订阅时重新显示第二张卡；查询模式切换无需重建配置窗口。
+        ShowWindow(GetDlgItem(settingsWindow,212),tokenMode?SW_HIDE:SW_SHOWNA);
         bool changed=false;
-        for(const auto& item:{std::pair<int,std::wstring>{206,summary},{211,quota::Remaining(five)},{212,quota::Remaining(week)}}){
+        for(const auto& item:{std::pair<int,std::wstring>{206,summary},{211,tokenMode?L"API / Token":quota::Remaining(five)},{212,quota::Remaining(week)}}){
             HWND label=GetDlgItem(settingsWindow,item.first);if(quota_ui::caption(label)!=item.second){SetWindowTextW(label,item.second.c_str());changed=true;}
         }
         if(changed)InvalidateRect(settingsWindow,nullptr,FALSE);
@@ -588,8 +607,15 @@ void CloudLoop(){
                 data.refreshing=false;
                 // 元数据复核与结果采纳在同一锁下；切换期间返回的旧账号响应直接丢弃。
                 if(generation==ObserveAuthLocked()){
-                    if(result.ok){data.snapshot=result.snapshot;data.fromServer=true;data.lastSuccess=result.snapshot.observed;data.queryError.clear();failures=0;historyStore.record(result.snapshot,"account");}
-                    else {data.queryError=result.error;++failures;}
+                    if(result.ok){
+                        if(data.accountMode!=result.accountMode)historyStore.reset();
+                        data.accountMode=result.accountMode;data.snapshot=result.snapshot;data.fromServer=true;data.lastSuccess=quota::NowMs();data.queryError.clear();failures=0;
+                        if(!quota::NoSubscriptionQuota(result.accountMode))historyStore.record(result.snapshot,"account");
+                    }else {
+                        if(result.accountMode==quota::AccountMode::SignedOut){data.accountMode=result.accountMode;data.snapshot={};data.localSnapshot={};data.fromServer=false;data.lastSuccess=0;historyStore.reset();}
+                        else if(result.accountMode==quota::AccountMode::Subscription)data.accountMode=result.accountMode;
+                        data.queryError=result.error;++failures;
+                    }
                 }
             }
             SignalState();
@@ -848,15 +874,16 @@ void PaintSettings(HWND h,HDC target){
     text(dc,Ui(L"Codex 配额"),theme.rect(24,20,360,32),theme.title,Text);
     text(dc,Ui(L"刷新与显示设置"),theme.rect(24,55,380,22),theme.smallFont,Muted);
     auto s=GetData();auto now=quota::NowMs();bool stale=IsStale(s,now);
-    std::wstring badge=s.refreshing?Ui(L"正在刷新"):!s.queryError.empty()?Ui(L"刷新失败"):stale?Ui(L"等待更新"):s.fromServer?Ui(L"已同步"):Ui(L"本地快照");
-    COLORREF badgeColor=!s.queryError.empty()?Error:stale?Warning:Accent;
+    bool tokenMode=quota::NoSubscriptionQuota(s.accountMode);
+    std::wstring badge=s.refreshing?Ui(L"正在刷新"):!s.queryError.empty()?Ui(L"刷新失败"):tokenMode?L"API / Token":stale?Ui(L"等待更新"):s.fromServer?Ui(L"已同步"):Ui(L"本地快照");
+    COLORREF badgeColor=!s.queryError.empty()?Error:stale&&!tokenMode?Warning:Accent;
     rounded(dc,theme.rect(480,27,116,27),Panel,Border,12);text(dc,badge,theme.rect(480,27,116,27),theme.smallFont,badgeColor,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
     rounded(dc,theme.rect(24,94,572,142),Panel,Panel,12);
-    text(dc,Ui(L"5 小时剩余"),theme.rect(44,109,242,22),theme.smallFont,Muted);
-    text(dc,Ui(L"本周剩余"),theme.rect(330,109,242,22),theme.smallFont,Muted);
-    HPEN pen=CreatePen(PS_SOLID,1,Border);auto oldPen=SelectObject(dc,pen);MoveToEx(dc,theme.px(308),theme.px(114),nullptr);LineTo(dc,theme.px(308),theme.px(196));MoveToEx(dc,theme.px(24),theme.px(489),nullptr);LineTo(dc,theme.px(596),theme.px(489));SelectObject(dc,oldPen);DeleteObject(pen);
+    text(dc,Ui(tokenMode?L"当前连接方式":L"5 小时剩余"),theme.rect(44,109,242,22),theme.smallFont,Muted);
+    if(!tokenMode)text(dc,Ui(L"本周剩余"),theme.rect(330,109,242,22),theme.smallFont,Muted);
+    HPEN pen=CreatePen(PS_SOLID,1,Border);auto oldPen=SelectObject(dc,pen);if(!tokenMode){MoveToEx(dc,theme.px(308),theme.px(114),nullptr);LineTo(dc,theme.px(308),theme.px(196));}MoveToEx(dc,theme.px(24),theme.px(489),nullptr);LineTo(dc,theme.px(596),theme.px(489));SelectObject(dc,oldPen);DeleteObject(pen);
     auto bar=[&](int x,const quota::Window& raw){auto w=CurrentWindow(raw,now);RECT track=theme.rect(x,190,244,4);rounded(dc,track,Border,Border,4);if(w.present){int width=static_cast<int>(std::clamp(100.0-w.used,0.0,100.0)*244/100.0);if(width>1)rounded(dc,theme.rect(x,190,width,4),stale?Muted:100-w.used<=20?Warning:Accent,stale?Muted:100-w.used<=20?Warning:Accent,4);}};
-    bar(44,s.snapshot.fiveHour);bar(330,s.snapshot.weekly);
+    if(!tokenMode){bar(44,s.snapshot.fiveHour);bar(330,s.snapshot.weekly);}
     text(dc,Ui(L"自动刷新"),theme.rect(24,254,400,24),theme.medium,Text);
     text(dc,Ui(L"按设定间隔获取账户最新额度"),theme.rect(24,324,530,20),theme.smallFont,Muted);
     text(dc,Ui(L"刷新间隔"),theme.rect(24,343,274,22),theme.body,Text);
@@ -963,7 +990,7 @@ LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
             if(!quota::SaveSettings(settingsPath,config)){SetWindowTextW(GetDlgItem(h,207),Ui(L"无法保存本机配置，请检查文件权限。"));return 0;}
             {std::lock_guard<std::mutex> lock(preferencesMutex);preferences=config;}showInCodex=config.showInCodex;leftSide=config.leftSide;
             ConfigureHistory(config);
-            if(!config.online){std::lock_guard<std::mutex> lock(dataMutex);if(data.localSnapshot.observed){data.snapshot=data.localSnapshot;data.fromServer=false;}}
+            if(!config.online){std::lock_guard<std::mutex> lock(dataMutex);if(data.localSnapshot.observed&&!quota::NoSubscriptionQuota(data.accountMode)&&data.accountMode!=quota::AccountMode::SignedOut){data.snapshot=data.localSnapshot;data.fromServer=false;}}
             TranslateSettings(h);lastVisible=false;PositionStrip();UpdateState();RequestCloud();SetWindowTextW(GetDlgItem(h,207),Ui(L"已保存并应用。"));return 0;
         }
         break;
