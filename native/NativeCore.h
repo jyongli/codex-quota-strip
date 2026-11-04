@@ -3,6 +3,7 @@
 #include "../source/AccountMode.h"
 #include "../source/QuotaHistory.h"
 #include "../source/RequestUsage.h"
+#include "../source/LocalTokenUsage.h"
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
@@ -24,6 +25,7 @@ struct Preferences {
 struct State {
     quota::Snapshot snapshot;
     quota::AccountMode accountMode = quota::AccountMode::Unknown;
+    quota::LocalTokenUsage localUsage;
     bool refreshing = false;
     std::string error;
     std::string historyError;
@@ -69,6 +71,8 @@ class Engine {
     State state_;
     quota::HistoryStore history_;
     quota::RequestStore requests_;
+    quota::LocalTokenMeter localMeter_;
+    void resetLocalUsageLocked(long long now){localMeter_.reset(now);state_.localUsage=localMeter_.snapshot();}
     std::function<void()> changed_;
     std::thread thread_;
     std::atomic<bool> stop_{false};

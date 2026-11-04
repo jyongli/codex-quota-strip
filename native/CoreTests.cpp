@@ -1,5 +1,6 @@
 #include "../source/QuotaCore.h"
 #include "../source/AccountMode.h"
+#include "../source/LocalTokenUsage.h"
 #include "Localization.h"
 #include <iostream>
 #include <stdexcept>
@@ -17,6 +18,10 @@ int main() {
         require(quota::NoSubscriptionQuota(quota::ReadAccountMode(quota::JsonParser(R"({"account":{"type":"apiKey"},"requiresOpenaiAuth":true})").parse())), "API-key account summary must be explicitly quota-free");
         require(!quota::NoSubscriptionQuota(quota::ReadAccountMode(quota::JsonParser(R"({"account":{"type":"chatgptAuthTokens"},"requiresOpenaiAuth":true})").parse())), "ChatGPT token authentication must retain subscription semantics");
         require(std::string(nativequota::Translate("API / Token mode", true)) == "API / Token 模式" && std::string(nativequota::Translate("Codex account is signed out", true)) == "Codex 账号未登录", "Native account-mode and signed-out labels must translate");
+        // 原生标签只取真实 total；缓存与推理是子项，未知／不可用不能误显示零。
+        quota::LocalTokenMeter usage; usage.reset(1000); quota::RequestEntry recorded;recorded.turnId="core-meter-turn";recorded.threadId="core-meter-thread"; recorded.started = 1100; recorded.ended = 1200; recorded.tokens = quota::TokenCounts{1000, 200, 0, 300, 50, 1300};
+        usage.add(recorded);
+        require(usage.tokens == 1300 && quota::LocalTokenValue(usage) == "1.3K" && quota::LocalTokenValue(usage, false) == "-", "Native token labels must compact totals and preserve unavailable values");
         require(!quota::WeeklyOnly(result), "Unknown startup must retain five-hour placeholder");
         result.observed = 1; result.fiveHour.present = false;
         require(quota::WeeklyOnly(result), "Confirmed weekly-only data must hide five-hour UI");

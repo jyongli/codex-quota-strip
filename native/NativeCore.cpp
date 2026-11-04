@@ -420,7 +420,11 @@ std::string Remaining(quota::Window value, long long now) {
 }
 bool Stale(const State& state, const Preferences& value, long long now) { return !quota::NoSubscriptionQuota(state.accountMode) && (!state.snapshot.observed || now - state.snapshot.observed >= value.staleMinutes * 60000LL); }
 std::string Summary(const State& state, const Preferences& value, long long now) {
-    if (quota::NoSubscriptionQuota(state.accountMode)) return Translate("API / Token mode", value.chinese);
+    if (quota::NoSubscriptionQuota(state.accountMode)) {
+        auto used = quota::LocalTokenValue(state.localUsage, value.historyEnabled && state.requestError.empty());
+        if (used == "-") used = "—";
+        return std::string(Translate("Run used", value.chinese)) + " " + used + " Token | " + Translate("Remaining", value.chinese) + " —";
+    }
     return (quota::WeeklyOnly(state.snapshot) ? "" : "5h " + Remaining(state.snapshot.fiveHour, now) + "  ") + "W " + Remaining(state.snapshot.weekly, now) + (Stale(state, value, now) ? " *" : "");
 }
 bool HostMatches(const std::string& identifier, const std::string& configured) {
@@ -534,6 +538,7 @@ QueryResult Query(const std::string& binary, const std::string& home, const std:
 }
 
 Engine::Engine(Preferences settings) : preferences_(std::move(settings)) {
+    resetLocalUsageLocked(NowMs());
     history_.configure(preferences_.historyEnabled, preferences_.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(preferences_.historyDirectory));
     requests_.configure(preferences_.historyEnabled, preferences_.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(preferences_.historyDirectory));
 }
@@ -552,7 +557,7 @@ void Engine::configure(Preferences value) {
       // 更换查询可执行文件也可能切到不同 provider；语言、位置等显示设置保留已确认模式。
       if (value.binary != preferences_.binary) { state_.snapshot = {}; state_.accountMode = quota::AccountMode::Unknown; history_.reset(); }
       sessionsChanged = homeChanged || value.historyEnabled != preferences_.historyEnabled || value.historyDirectory != preferences_.historyDirectory;
-      if (sessionsChanged) ++sessionGeneration_;
+      if (sessionsChanged) { ++sessionGeneration_; resetLocalUsageLocked(NowMs()); }
       history_.configure(value.historyEnabled, value.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(value.historyDirectory));
       requests_.configure(value.historyEnabled, value.historyDirectory.empty() ? ConfigDirectory() / "history" : std::filesystem::path(value.historyDirectory));
       state_.requestError = requests_.error(); recording = value.historyEnabled; sessionGeneration = sessionGeneration_;
@@ -566,6 +571,7 @@ bool Engine::observeAccountLocked() {
     const auto identity = AuthStamp(preferences_.home);
     if (identity == authIdentity_) return false;
     authIdentity_ = identity; authBoundaryMs_ = NowMs(); state_.snapshot = {}; state_.accountMode = quota::AccountMode::Unknown; state_.error = "Account changed; waiting for new quota";
+    resetLocalUsageLocked(authBoundaryMs_);
     history_.reset(); ++sessionGeneration_; ++generation_; queryCancelled_ = true; requested_ = true;
     return true;
 }
@@ -592,7 +598,11 @@ void Engine::start(std::function<void()> changed) {
                 // 启动时重建的旧开始行不能绕过账号边界；只有完全未知的尾部完成记录可用结束时间。
                 bool afterBoundary = (entry.started ? entry.started : entry.ended) >= authBoundaryMs_ && (entry.started || unknownOnly);
                 if (!authChanged && generation == sessionGeneration_ && preferences_.historyEnabled && afterBoundary) {
-                    auto previous = state_.requestError; notify = requests_.record(entry); state_.requestError = requests_.error(); notify = notify || previous != state_.requestError;
+                    auto previous = state_.requestError; const bool recorded = requests_.record(entry);
+                    // 只累计真正写入并通过持久去重的请求；共享计量器在 4096 条后冻结下限。
+                    if (recorded){localMeter_.add(entry);state_.localUsage=localMeter_.snapshot();}
+                    else if(!requests_.error().empty()){localMeter_.partial=true;state_.localUsage=localMeter_.snapshot();}
+                    state_.requestError = requests_.error(); notify = recorded || previous != state_.requestError;
                 }
             }
             // 这里只发非阻塞唤醒，不在 Engine 锁内接触监听器锁或等待监听线程。
@@ -631,12 +641,17 @@ void Engine::run() {
         if (changed_) changed_();
         lastAttempt = std::chrono::steady_clock::now();
         auto answer = Query(FindBinary(settings), settings.home, queryCancelled_);
+        bool accountChanged = false, recording = false; unsigned sessionGeneration = 0; std::string currentHome;
         {
             std::lock_guard<std::mutex> lock(mutex_); state_.refreshing = false;
             if (generation == generation_) {
-                if (AuthStamp(settings.home) != stamp) { state_.snapshot = {}; state_.accountMode = quota::AccountMode::Unknown; state_.error = "Account changed; refresh again"; history_.reset(); }
+                if (AuthStamp(settings.home) != stamp) {
+                    accountChanged = observeAccountLocked(); currentHome = preferences_.home; recording = preferences_.historyEnabled; sessionGeneration = sessionGeneration_;
+                    state_.snapshot = {}; state_.accountMode = quota::AccountMode::Unknown; state_.error = "Account changed; refresh again"; history_.reset();
+                }
                 else if (answer.ok) {
                     const bool modeChanged = state_.accountMode != answer.accountMode;
+                    if(modeChanged&&state_.accountMode!=quota::AccountMode::Unknown)resetLocalUsageLocked(NowMs());
                     state_.snapshot = answer.snapshot; state_.accountMode = answer.accountMode; state_.error.clear(); failures = 0;
                     // 仅接受当前账号/配置代次的真实成功结果，日志失败不覆盖查询结果。
                     if (modeChanged) history_.reset();
@@ -644,14 +659,16 @@ void Engine::run() {
                     state_.historyError = history_.error();
                 }
                 else {
-                    if (answer.accountMode == quota::AccountMode::SignedOut) { state_.snapshot = {}; state_.accountMode = answer.accountMode; history_.reset(); }
-                    else if (answer.accountMode == quota::AccountMode::Subscription) state_.accountMode = answer.accountMode;
+                    if (answer.accountMode == quota::AccountMode::SignedOut) { state_.snapshot = {}; state_.accountMode = answer.accountMode;resetLocalUsageLocked(NowMs());history_.reset(); }
+                    else if (answer.accountMode == quota::AccountMode::Subscription){if(quota::NoSubscriptionQuota(state_.accountMode))resetLocalUsageLocked(NowMs());state_.accountMode = answer.accountMode;}
                     state_.error = answer.error; ++failures;
                 }
             }
             int delay = failures ? std::min(900, preferences_.seconds * (1 << std::min(failures, 3u))) : preferences_.seconds;
             nextDue = std::chrono::steady_clock::now() + std::chrono::seconds(delay);
         }
+        // 查询线程先发现换号时也重建会话监听；已采纳的新代次不能只清计数而遗漏监听器同步。
+        if (accountChanged && sessionWatcher_) sessionWatcher_->configure(currentHome, recording, sessionGeneration);
         if (!stop_.load() && changed_) changed_();
     }
 }

@@ -50,9 +50,13 @@ int main(int argc, char** argv) {
         require(nativequota::Summary(weekly, settings, nativequota::NowMs()) == "W 54%", "Weekly-only native menu bar must omit five-hour label");
         require(nativequota::Placement({100, 50, 900, 600}, true, true).height == 56, "Weekly-only native overlay must compact its geometry");
         nativequota::State api; api.accountMode = quota::AccountMode::ApiKey;
-        require(nativequota::Summary(api, settings, nativequota::NowMs()) == "API / Token 模式" && !nativequota::Stale(api, settings, nativequota::NowMs()), "Known API mode must display its localized label without missing-quota or stale placeholders");
+        require(nativequota::Summary(api, settings, nativequota::NowMs()) == "本次已用 0 Token | 剩余 —" && !nativequota::Stale(api, settings, nativequota::NowMs()), "Known API mode must display local tokens and unknown remaining quota without stale placeholders");
         auto english = settings; english.chinese = false; api.accountMode = quota::AccountMode::ExternalProvider;
-        require(nativequota::Summary(api, english, nativequota::NowMs()) == "API / Token mode", "External provider summary must be clear in English");
+        require(nativequota::Summary(api, english, nativequota::NowMs()) == "Run used 0 Token | Remaining —", "External provider summary must be clear in English");
+        api.requestError = "Cannot watch Codex sessions; check home directory and permissions";
+        require(nativequota::Summary(api, english, nativequota::NowMs()) == "Run used — Token | Remaining —", "Watcher errors must preserve unknown local use instead of displaying zero");
+        api.requestError.clear(); english.historyEnabled = false;
+        require(nativequota::Summary(api, english, nativequota::NowMs()) == "Run used — Token | Remaining —", "Disabled request logging must not display zero local use");
         { nativequota::InstanceLock first(root / "instance.lock"); require(first.acquired(), "First instance must acquire lock"); nativequota::InstanceLock second(root / "instance.lock"); require(!second.acquired(), "Duplicate instance must fail lock"); }
         { nativequota::InstanceLock third(root / "instance.lock"); require(third.acquired(), "Exited instance must release lock"); }
         settings.binary = std::filesystem::absolute(argv[1]).string(); settings.online = true;
@@ -133,6 +137,14 @@ int main(int argc, char** argv) {
         require(requests.entries.size() == 1 && requests.entries[0].turnId == "runtime-turn" && requests.entries[0].tokens && requests.entries[0].tokens->input == 100 && requests.entries[0].tokens->total == 130,
             "Native event-driven session follower must record real request tokens with online queries disabled");
         require(listener.state().snapshot.observed == 0, "Session logging must not launch an account query");
+        // 真正落盘的请求才更新本次运行计数；旧版本虽然写入 CSV，计数仍为零。
+        const auto recordedUsage = listener.state().localUsage;
+        require(recordedUsage.tokens == 130 && recordedUsage.requests == 1 && recordedUsage.knownRequests == 1 && recordedUsage.missingRequests == 0 && !recordedUsage.partial,
+            "A real persisted session request must update the native run token meter exactly once");
+        // 复用同一真实请求的完成通知验证持久去重，不能令计数器加第二次。
+        { std::ofstream out(session, std::ios::app); out << requestFixture("runtime-turn", nativequota::NowMs() + 10); }
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        require(listener.state().localUsage.tokens == 130 && listener.state().localUsage.requests == 1, "Replayed persisted requests must not increment native local token totals");
         require(requests.entries[0].conversationLabel=="Runtime conversation", "Native request snapshots must resolve the source conversation title on demand");
         std::this_thread::sleep_for(std::chrono::milliseconds(30)); auto notificationsBeforeHomeWrites = requestNotifications.load();
         for (int index = 0; index < 64; ++index) { std::ofstream unrelated(std::filesystem::path(settings.home) / "state.sqlite-wal", std::ios::app); unrelated << "synthetic unrelated state\n"; }
@@ -151,6 +163,7 @@ int main(int argc, char** argv) {
         deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (listener.state().error != "Account changed; waiting for new quota" && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         require(listener.state().error == "Account changed; waiting for new quota", "Auth replacement must be observed before replay completion regression");
+        require(listener.state().localUsage.tokens == 0 && listener.state().localUsage.requests == 0, "Auth changes must reset the local run meter while preserving request history");
         auto ready = sessions / "rollout-new-account-ready.jsonl";
         { std::ofstream out(ready); out << requestFixture("new-account-ready", nativequota::NowMs() + 10); }
         deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -184,7 +197,11 @@ int main(int argc, char** argv) {
         settings.historyEnabled = false; listener.configure(settings);
         { std::ofstream out(session, std::ios::app); out << requestFixture("disabled-turn", nativequota::NowMs() + 10); }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        require(listener.requests().entries.size() == recordedBeforeDisable, "Disabled logging must stop following session appends"); listener.stop();
+        require(listener.requests().entries.size() == recordedBeforeDisable && listener.state().localUsage.tokens == 0 && listener.state().localUsage.requests == 0, "Disabled logging must stop following session appends and reset the run meter");
+        const auto savedDirectory = settings.historyDirectory; settings.historyDirectory = (root / "new request log").string(); listener.configure(settings);
+        require(listener.state().localUsage.tokens == 0 && listener.state().localUsage.requests == 0 && std::filesystem::exists(savedDirectory), "Log directory changes reset only the local meter and preserve old history");
+        settings.home = (root / "new request home").string(); listener.configure(settings);
+        require(listener.state().localUsage.tokens == 0 && listener.state().localUsage.requests == 0, "Home changes must begin a separate local run meter"); listener.stop();
         // root 完全由测试创建，包含新监听器的会话与日志目录，结束后统一清理。
         std::filesystem::remove_all(root);
         std::cout << "PASS: preferences, input bounds, overlay geometry, expiry, single instance and blocking refresh lifecycle\n";

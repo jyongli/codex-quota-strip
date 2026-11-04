@@ -7,7 +7,11 @@ inline const char* Translate(const char* english, bool chinese) {
     if (!chinese) return english;
     struct Entry { const char* english; const char* chinese; };
     static const Entry entries[] = {
+        {"Recorded tokens:","已记录 Token："},
         {"API / Token mode","API / Token 模式"},{"No subscription quota; token usage is in Work requests.","无订阅额度；Token 用量见工作请求。"},
+        {"Run used","本次已用"},{"Used","已用"},{"Remaining","剩余"},
+        {"Local meter: completed/interrupted requests recorded during this run. Restart, account, directory or logging changes reset it; history stays.","本机计量：仅统计本次运行已记录的完成／中断请求。重启、换账号／目录或切换记录开关后重计，历史保留。"},
+        {"+ means a lower bound: missing/partial usage or the 4096-request cap. Cache/reasoning subsets are not counted twice. Remaining and actual cost are unknown; no extra network requests.","+ 表示下限：存在缺失／部分用量或已达 4096 条上限；缓存／推理子项不重复相加。剩余量与实际费用未知，不额外联网。"},
         {"Codex account is signed out","Codex 账号未登录"},
         {"Quota history…","额度变化…"},{"Codex Quota — History","Codex 配额 — 变化历史"},
         {"Quota changes","额度变化"},{"Work requests","工作请求"},{"Record quota changes and request tokens","记录额度变化与请求 token"},

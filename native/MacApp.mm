@@ -293,7 +293,10 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     if (point) CFRelease(point); if (size) CFRelease(size); if (minimized) CFRelease(minimized);
     if (!valid || dimensions.width < 100 || dimensions.height < 40) { [strip orderOut:nil]; return; }
     auto current = engine->state(); auto preferences = engine->preferences();
-    auto frame = Placement({origin.x, origin.y, dimensions.width, dimensions.height}, preferences.left, quota::WeeklyOnly(current.snapshot) || (preferences.left && quota::NoSubscriptionQuota(current.accountMode)));
+    auto frame = Placement({origin.x, origin.y, dimensions.width, dimensions.height}, preferences.left, quota::WeeklyOnly(current.snapshot));
+    if (!preferences.left && quota::NoSubscriptionQuota(current.accountMode)) {
+        frame.width = std::min(360.0, std::max(100.0, dimensions.width - 16)); frame.x = origin.x + std::max(8.0, (dimensions.width - frame.width) / 2);
+    }
     // AX 使用主屏左上角坐标；AppKit 窗口使用左下角坐标，保留跨屏的全局 X/Y。
     double mainHeight = NSMaxY([NSScreen screens].firstObject.frame);
     [strip setFrame:NSMakeRect(frame.x, mainHeight - frame.y - frame.height, frame.width, frame.height) display:YES];
@@ -304,15 +307,19 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     auto current = engine->state(); auto prefs = engine->preferences(); auto now = NowMs(); auto text = Summary(current, prefs, now);
     statusItem.button.title = Text(text);
     const bool api = quota::NoSubscriptionQuota(current.accountMode);
-    statusItem.button.toolTip = api ? [self ui:@"No subscription quota; token usage is in Work requests."] : nil;
+    statusItem.button.toolTip = api ? [self ui:@"Local meter: completed/interrupted requests recorded during this run. Restart, account, directory or logging changes reset it; history stays."] : nil;
     bool weeklyOnly = quota::WeeklyOnly(current.snapshot);
-    std::string panel = api ? (prefs.left ? "API\nToken" : text) : prefs.left ? (weeklyOnly ? "" : "5h\n" + Remaining(current.snapshot.fiveHour, now) + "\n") + "W\n" + Remaining(current.snapshot.weekly, now) : text;
-    stripText.stringValue = Text(panel); stripText.maximumNumberOfLines = prefs.left ? (api ? 2 : 4) : 1;
+    auto used = quota::LocalTokenValue(current.localUsage, prefs.historyEnabled && current.requestError.empty());
+    auto exact=quota::LocalTokenExact(current.localUsage,prefs.historyEnabled&&current.requestError.empty());if(exact=="-")exact="—";
+    statusItem.button.toolTip=Text(api?std::string(Translate("Recorded tokens:",prefs.chinese))+" "+exact+" Token":text);
+    std::string panel = api ? (prefs.left ? std::string(Translate("Used", prefs.chinese)) + "\n" + (used == "-" ? "—" : used) + "\n" + Translate("Remaining", prefs.chinese) + "\n—" : text) : prefs.left ? (weeklyOnly ? "" : "5h\n" + Remaining(current.snapshot.fiveHour, now) + "\n") + "W\n" + Remaining(current.snapshot.weekly, now) : text;
+    stripText.stringValue = Text(panel); stripText.maximumNumberOfLines = prefs.left ? 4 : 1;
     stripText.textColor = Stale(current, prefs, now) ? NSColor.lightGrayColor : NSColor.whiteColor;
     if (lastWeeklyOnly != weeklyOnly || lastApiMode != api) { lastWeeklyOnly = weeklyOnly; lastApiMode = api; [self updateHost]; }
     if (status) {
         std::string detail = text + "\n" + Translate(current.refreshing ? "Refreshing…" : !current.error.empty() ? current.error.c_str() : !prefs.online ? "Online queries disabled" : "Account quota",prefs.chinese);
         if (api) detail += "\n" + std::string(Translate("No subscription quota; token usage is in Work requests.", prefs.chinese));
+        if(api)detail+="\n"+std::string(Translate("Recorded tokens:",prefs.chinese))+" "+exact+" Token";
         if (!current.historyError.empty()) detail += "\n" + std::string(Translate(current.historyError.c_str(), prefs.chinese));
         if (!current.requestError.empty()) detail += "\n" + std::string(Translate(current.requestError.c_str(), prefs.chinese));
         if (!options.smoke && prefs.overlay && !AXIsProcessTrusted()) detail += Translate("\nAllow Accessibility access to follow Codex windows.",prefs.chinese);
@@ -359,6 +366,11 @@ static void AxChanged(AXObserverRef, AXUIElementRef, CFStringRef, void* context)
     auto permission = [NSButton buttonWithTitle:[self ui:@"Allow Accessibility…"] target:self action:@selector(permission:)]; permission.frame = NSMakeRect(24, 85, 230, 32); [configForm addSubview:permission];
     auto refresh = [NSButton buttonWithTitle:[self ui:@"Refresh now"] target:self action:@selector(refresh:)]; refresh.frame = NSMakeRect(24, 30, 130, 34); [configActions addSubview:refresh];
     configApply = [NSButton buttonWithTitle:[self ui:@"Save and apply"] target:self action:@selector(apply:)]; configApply.frame = NSMakeRect(380, 30, 156, 34); configApply.keyEquivalent = @"\r"; [configActions addSubview:configApply];
+    // 范围说明位于可滚动表单中，避免塞进固定高度的状态标签后被裁掉。
+    configForm.frame = NSMakeRect(0, 0, 560, 920);
+    for (NSView* control in configForm.subviews) control.frame = NSOffsetRect(control.frame, 0, 160);
+    auto meterScope = [NSTextField wrappingLabelWithString:[NSString stringWithFormat:@"%@\n%@", [self ui:@"Local meter: completed/interrupted requests recorded during this run. Restart, account, directory or logging changes reset it; history stays."], [self ui:@"+ means a lower bound: missing/partial usage or the 4096-request cap. Cache/reasoning subsets are not counted twice. Remaining and actual cost are unknown; no extra network requests."]]];
+    meterScope.frame = NSMakeRect(24, 18, 512, 136); [configForm addSubview:meterScope];
     [configScroll.contentView scrollToPoint:NSMakePoint(0, std::max(0.0, configForm.frame.size.height - configScroll.contentView.bounds.size.height))]; [configScroll reflectScrolledClipView:configScroll.contentView];
     [config center]; [self update]; [NSApp activateIgnoringOtherApps:YES]; [config makeKeyAndOrderFront:nil];
 }
