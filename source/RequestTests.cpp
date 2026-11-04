@@ -1,4 +1,5 @@
 #include "RequestUsage.h"
+#include "LocalTokenUsage.h"
 #include "ConversationNames.h"
 #ifdef _WIN32
 #include "QuotaFiles.h"
@@ -54,6 +55,30 @@ static void conversations(const std::filesystem::path& root){
     quota::ResolveRequestConversations(root/"missing-home",rows);require(rows[0].conversationLabel=="main", "unavailable title metadata must leave the usage list usable with its thread ID");
 }
 int main() { try {
+    {
+    quota::LocalTokenMeter local;local.reset(1000);quota::RequestEntry completed;completed.threadId="meter-thread";completed.turnId="meter-turn";completed.started=1100;completed.ended=1200;completed.tokens=quota::TokenCounts{100,20,0,30,5,130};
+    local.add(completed);
+    require(local.tokens==130&&local.requests==1&&quota::LocalTokenValue(local)=="130","Local meter must count confirmed total once without adding cached or reasoning subsets");
+    local.add(completed);
+    require(local.tokens==130&&local.requests==1,"Meter identity must independently reject replay even if the persistence cache has evicted its key");
+    auto unknown=completed;unknown.turnId="unknown-turn";unknown.tokens.reset();local.add(unknown);
+    require(local.tokens==130&&local.missingRequests==1&&quota::LocalTokenValue(local)=="130+","Missing request tokens must mark a lower bound instead of adding a fabricated zero");
+    require(quota::LocalTokenValue(local,false)=="-","Disabled or failed recording must not claim zero usage");
+    local.reset(2000);local.add(completed);require(local.requests==0&&local.tokens==0,"A reset must exclude earlier completed requests");
+    quota::LocalTokenMeter boundedMeter;auto one=completed;one.tokens->total=1;
+    for(size_t i=0;i<quota::LocalTokenUsageLimit+2;++i){one.turnId=std::to_string(i);boundedMeter.add(one);}
+    require(boundedMeter.requests==quota::LocalTokenUsageLimit&&boundedMeter.tokens==static_cast<long long>(quota::LocalTokenUsageLimit)&&boundedMeter.partial,"Counting beyond the deduplication horizon must freeze a safe lower bound");
+    quota::LocalTokenMeter overflow;overflow.tokens=std::numeric_limits<long long>::max()-10;overflow.add(completed);
+    require(overflow.tokens==std::numeric_limits<long long>::max()&&overflow.partial,"Token sums must not overflow into negative usage");
+    require(quota::CompactTokens(1300)=="1.3K"&&quota::CompactTokens(125000)=="125K"&&quota::CompactTokens(1230000)=="1.2M","Compact Token units must fit the tray while retaining exact totals separately");
+    quota::LocalTokenMeter replay;replay.reset(1150);replay.add(completed);
+    auto earlier=completed;earlier.ended=1140;
+    for(size_t i=0;i<5000;++i){earlier.turnId=std::to_string(i);replay.add(earlier);}
+    replay.add(completed);require(replay.tokens==130&&replay.requests==1,"Old source replay after a meter reset must never evict counted request identities");
+    quota::LocalTokenMeter onlyUnknown;onlyUnknown.add(unknown);
+    require(quota::LocalTokenExact(onlyUnknown)=="-","Exact and compact summaries must agree when all tokens are unknown");
+    std::cout<<"PASS: local run Token totals, missing values, reset boundary, bounded lower limit, overflow and compact units\n";
+    }
     require(quota::JsonParser(R"({"title":"\u5bf9\u8bdd \ud83d\ude00"})").parse().get("title").str == u8"对话 😀", "escaped Unicode conversation titles must retain Chinese characters and emoji");
     quota::RequestTracker tracker; std::vector<quota::RequestEntry> rows;
     auto accept = [&](const auto& row) { rows.push_back(row); };

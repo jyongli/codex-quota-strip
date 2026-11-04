@@ -29,6 +29,13 @@ inline HICON MetricIcon(int size, const wchar_t* label, const std::wstring& valu
     RECT captionRect{0,0,size,captionHeight}, numberRect{0,captionHeight-1,size,size};
     DrawTextW(dc, label, -1, &captionRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
     SelectObject(dc, number);
+    SIZE measured{};GetTextExtentPoint32W(dc,value.c_str(),static_cast<int>(value.size()),&measured);
+    if(measured.cx>size-2){
+        // K/M 和下限标记可能比百分数长；按实测宽度缩小一次，避免裁掉尾部单位。
+        LOGFONTW style{};GetObjectW(number,sizeof(style),&style);
+        style.lfHeight=-std::max(1,static_cast<int>((-style.lfHeight)*(size-2)/measured.cx));
+        HFONT fitted=CreateFontIndirectW(&style);if(fitted){SelectObject(dc,fitted);DeleteObject(number);number=fitted;}
+    }
     DrawTextW(dc, value.c_str(), -1, &numberRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
     GdiFlush();
     for (int i = 0; i < size * size; ++i) pixels[i] = (pixels[i] & 0x00ffffff) ? (pixels[i] | 0xff000000) : 0;

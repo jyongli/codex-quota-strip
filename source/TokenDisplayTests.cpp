@@ -45,18 +45,43 @@ int wmain(int argc,wchar_t** argv){
         require(CreateQuotaFixtureProcess(command,root,start,fixture)!=FALSE,"Synthetic Codex binary must launch");
         command=L"\""+std::filesystem::absolute(argv[1]).wstring()+L"\" --home \""+root.wstring()+L"\" --status \""+status.wstring()+L"\" --settings";
         require(CreateQuotaFixtureProcess(command,root,start,app)!=FALSE,"Token UI fixture must launch");target.pid=app.dwProcessId;
-        require(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&target));return target.settings&&state(status).get("account_mode").str=="api-key";}),"API login must expose explicit mode in the real controller");
-        auto api=state(status);require(api.get("tray_icons").num==1&&api.get("tray_values").elements[0].str=="API","API mode must replace both empty quota icons with one legible API icon");
-        require(caption(GetDlgItem(target.settings,211))==L"API / Token"&&!IsWindowVisible(GetDlgItem(target.settings,212)),"Settings must replace empty quota cards with an API / Token heading");
+        require(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&target));auto current=state(status);return target.settings&&current.get("account_mode").str=="api-key"&&current.get("local_token_available").num;}),"API login must expose explicit mode with the local watcher ready");
+        auto api=state(status);require(api.get("tray_icons").num==1&&api.get("tray_values").elements[0].str=="0","API mode must show a numeric local Token meter instead of a static API label");
+        require(wait([&]{return caption(GetDlgItem(target.settings,211))==L"0"&&caption(GetDlgItem(target.settings,212))==L"—"&&IsWindowVisible(GetDlgItem(target.settings,212));}),"Settings must show local used tokens and unknown remaining balance directly");
         require(caption(GetDlgItem(target.settings,206)).find(L"Token")!=std::wstring::npos,"Settings must explain where real Token usage can be viewed");
+        SYSTEMTIME time{};GetSystemTime(&time);char timestamp[64]{};sprintf_s(timestamp,"%04u-%02u-%02uT%02u:%02u:%02u.%03uZ",time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond,time.wMilliseconds);
+        auto event=[&](const char* type,const char* payload){return std::string("{\"timestamp\":\"")+timestamp+"\",\"type\":\""+type+"\",\"payload\":"+payload+"}\n";};
+        auto records=event("session_meta",R"({"id":"local-token-thread"})")+event("event_msg",R"({"type":"task_started","turn_id":"local-token-turn"})")+
+            event("event_msg",R"({"type":"token_count","info":{"total_token_usage":{"input_tokens":1200,"cached_input_tokens":500,"output_tokens":100,"reasoning_output_tokens":20,"total_tokens":1300},"last_token_usage":{"input_tokens":1200,"cached_input_tokens":500,"output_tokens":100,"reasoning_output_tokens":20,"total_tokens":1300}}})")+
+            event("event_msg",R"({"type":"task_complete","turn_id":"local-token-turn"})");
+        {std::ofstream out(root/L"sessions/rollout-local.jsonl");out<<records;}
+        require(wait([&]{auto current=state(status);return current.get("local_tokens").num==1300&&current.get("tray_values").elements[0].str=="1.3K";}),"A real completed request must immediately update the Token tray from existing file notifications");
+        {std::ofstream out(root/L"sessions/rollout-replay.jsonl");out<<records;}
+        SendMessageW(target.controller,WM_COMMAND,3,0);
+        require(wait([&]{return !state(status).get("refreshing").num;}),"Replay check must settle");
+        require(state(status).get("local_tokens").num==1300,"Duplicate source files and refresh must not count the same request twice");
+        SendMessageW(GetDlgItem(target.settings,208),CB_SETCURSEL,1,0);SendMessageW(target.settings,WM_COMMAND,302,0);
+        require(wait([&]{return caption(GetDlgItem(target.settings,206)).find(L"Recorded this run:")==0;}),"Local Token statistics must switch to English");
+        require(state(status).get("local_tokens").num==1300,"Saving language must preserve the current run total");
+        SendMessageW(GetDlgItem(target.settings,209),BM_SETCHECK,BST_UNCHECKED,0);SendMessageW(target.settings,WM_COMMAND,302,0);
+        require(wait([&]{auto current=state(status);return !current.get("local_token_available").num&&current.get("tray_values").elements[0].str=="-";}),"Disabled recording must display unavailable tokens rather than a false zero");
+        SendMessageW(GetDlgItem(target.settings,209),BM_SETCHECK,BST_CHECKED,0);SendMessageW(target.settings,WM_COMMAND,302,0);
+        require(wait([&]{auto current=state(status);return current.get("local_token_available").num&&current.get("tray_values").elements[0].str=="0";}),"Re-enabled recording must start a fresh local run boundary");
+        GetSystemTime(&time);sprintf_s(timestamp,"%04u-%02u-%02uT%02u:%02u:%02u.%03uZ",time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond,time.wMilliseconds);
+        auto unknownRecords=event("session_meta",R"({"id":"unknown-token-thread"})")+event("event_msg",R"({"type":"task_started","turn_id":"unknown-token-turn"})")+event("event_msg",R"({"type":"task_complete","turn_id":"unknown-token-turn"})");
+        {std::ofstream out(root/L"sessions/rollout-unknown.jsonl");out<<unknownRecords;}
+        require(wait([&]{auto current=state(status);return current.get("local_token_requests").num==1&&current.get("tray_values").elements[0].str=="-";}),"A request without Token data must stay unknown in the tray");
+        require(wait([&]{return caption(GetDlgItem(target.settings,206)).find(L"— Token")!=std::wstring::npos;}),"All-unknown Token data must not be described as zero in the exact settings summary");
+        {std::ofstream out(root/L"auth.json");out<<"{}";}
+        require(wait([&]{auto current=state(status);return current.get("local_tokens").num==0&&current.get("local_token_requests").num==0;}),"An authentication boundary must not retain the previous login token total");
         // 同一进程重新查询，验证模式恢复不是仅启动时替换一次标签。
         mode("subscription");SendMessageW(target.controller,WM_COMMAND,3,0);
         require(wait([&]{auto current=state(status);return current.get("account_mode").str=="subscription"&&current.get("tray_icons").num==2&&current.get("weekly_remaining").num==70;}),"Subscription login must restore real quotas and both tray metrics");
-        require(IsWindowVisible(GetDlgItem(target.settings,212))&&caption(GetDlgItem(target.settings,211))==L"80%","Subscription settings must restore quota values");
+        require(wait([&]{return IsWindowVisible(GetDlgItem(target.settings,212))&&caption(GetDlgItem(target.settings,211))==L"80%";}),"Subscription settings must restore quota values");
         mode("external");SendMessageW(target.controller,WM_COMMAND,3,0);
         require(wait([&]{auto current=state(status);return current.get("account_mode").str=="external-provider"&&current.get("tray_icons").num==1&&current.get("weekly_remaining").kind==quota::Json::Null;}),"External Token mode must clear previous subscription values");
         mode("signed-out");SendMessageW(target.controller,WM_COMMAND,3,0);
         require(wait([&]{return state(status).get("account_mode").str=="signed-out";}),"Logout must clear the API display state");
-        std::cout<<"PASS: API / Token settings, single visible tray icon, subscription restoration and logout\n";clean();return 0;
+        std::cout<<"PASS: local Token tray and settings, live request count, replay deduplication, language, disabled capture, auth reset and subscription restoration\n";clean();return 0;
     }catch(const std::exception& error){std::cerr<<"FAIL: "<<error.what()<<'\n';clean();return 1;}
 }

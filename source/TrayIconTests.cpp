@@ -8,7 +8,7 @@ int wmain(int argc, wchar_t** argv) {
     DestroyIcon(warm); // Establish a baseline after Windows initializes its stock GDI objects.
     DWORD baselineGdi = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS), baselineUser = GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS);
     for (int i = 0; i < 100; ++i) {
-        HICON icon = quota::MetricIcon(32, i % 2 ? L"5h" : L"W", i % 3 ? L"10" : L"-", RGB(250,180,80));
+        HICON icon = quota::MetricIcon(32, i % 4 ? L"W" : L"Tok", i % 4 ? L"10" : L"1.3K+", RGB(250,180,80));
         if (!icon) { std::cerr << "FAIL: quota number must produce a real taskbar icon\n"; return 1; }
         ICONINFO info{};
         if (!GetIconInfo(icon, &info)) { std::cerr << "FAIL: Windows must accept the generated icon\n"; DestroyIcon(icon); return 1; }

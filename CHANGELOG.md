@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v3.0.0-preview.9 — 2026-11-04
+
+- API／Token 模式直接显示本机本次运行已记录的 Token，剩余保持 —；按持久化去重结果累计，不重复缓存／推理子项；支持未知／部分下限、账号与配置边界重计和中英文显示，不增加网络查询。 / Display local tokens recorded this run directly in API/Token mode with unknown remaining balance; count only persisted deduplicated requests, preserve partial lower bounds and authentication/configuration resets, and localize both languages without additional network queries.
+
 ## v3.0.0-preview.8 — 2026-11-04
 
 - API Key／第三方 Token 登录显示单个 API 托盘标识及双语模式说明，工作请求仍可查看真实 Token；切换订阅／未登录时清除旧模式，区分网络失败，不新增轮询或推理请求。 / Show a single API indicator and bilingual mode explanation for API-key/external-provider login, retain real tokens in Work requests, restore subscription/logout states and distinguish network failures without new polling or inference.

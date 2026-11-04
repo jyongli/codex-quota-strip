@@ -7,6 +7,13 @@ inline const wchar_t* Translate(const wchar_t* chinese, bool english) {
     if (!english) return chinese;
     struct Text { const wchar_t* chinese; const wchar_t* english; };
     static const Text entries[] = {
+        {L"已用",L"Used"},{L"剩余",L"Left"},{L"本次已用 ",L"Run used "},{L"剩余 —",L"Left —"},
+        {L"本机本次已用 Token",L"Local run tokens used"},{L"账户剩余",L"Account remaining"},
+        {L"本次运行已记录 ",L"Recorded this run: "},{L"；剩余量未提供。",L"; remaining unavailable."},
+        {L"本机本次已记录：",L"Local run recorded: "},{L"\n账户剩余：—",L"\nAccount remaining: —"},{L"\n统计起点：",L"\nRecorded since: "},
+        {L"\n仅含本次运行期间已记录的完成请求，不是账户账单。",L"\nOnly completed requests recorded this run; not the account bill."},
+        {L"\n+ 表示统计下限：部分 Token 未提供或记录达到统计上限。",L"\n+ means a lower bound: missing tokens or the counting limit was reached."},
+        {L"\n记录已关闭，请在配置中启用记录。",L"\nRecording disabled; enable it in Settings."},
         {L"API / Token 模式",L"API / Token mode"},
         {L"API / Token · 用量见工作请求",L"API / Token · see Work requests"},
         {L"无订阅额度；Token 用量见工作请求。",L"No subscription quota; see Work requests for tokens."},
