@@ -68,9 +68,9 @@ gh workflow run build-windows.yml --ref main
 gh run list --workflow build-windows.yml --branch main --event workflow_dispatch --limit 5
 ```
 
-工作流名为 `Build Desktop`，文件名保留为 `build-windows.yml`。手动触发后，Windows 执行 MSVC 构建／默认测试；Ubuntu 22.04 执行原生编译、CTest、X11 UI 和单实例测试；macOS 14 构建 arm64/x86_64 通用程序并执行 CTest／UI smoke。全部使用合成数据，不进行真实账号查询。配置见 [工作流](../.github/workflows/build-windows.yml)，runner 类型见 [GitHub 官方说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
+工作流名为 `Build Desktop`，文件名保留为 `build-windows.yml`。手动触发后，Windows 执行 MSVC 构建／默认测试；Ubuntu 22.04 执行原生编译、CTest、X11 UI 和单实例测试；macOS 15 构建 arm64/x86_64 通用程序并执行 CTest／UI smoke，最低部署目标为 macOS 14.0。全部使用合成数据，不进行真实账号查询。配置见 [工作流](../.github/workflows/build-windows.yml)，runner 类型见 [GitHub 官方说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
 
-The workflow is named `Build Desktop`, retaining the filename `build-windows.yml`. It manually runs Windows MSVC/default tests, Ubuntu 22.04 native builds/CTest/X11 UI/single-instance tests, and macOS 14 universal arm64/x86_64 builds/CTest/UI smoke. Tests use synthetic data, not live account queries. See the [workflow](../.github/workflows/build-windows.yml) and [runner documentation](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+The workflow is named `Build Desktop`, retaining the filename `build-windows.yml`. It manually runs Windows MSVC/default tests, Ubuntu 22.04 native builds/CTest/X11 UI/single-instance tests, and macOS 15 universal arm64/x86_64 builds/CTest/UI smoke with a macOS 14.0 deployment target. Tests use synthetic data, not live account queries. See the [workflow](../.github/workflows/build-windows.yml) and [runner documentation](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
 ## 4. 等待并下载 / Wait and download
 

@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-14]
+        os: [ubuntu-22.04, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     defaults:
@@ -117,9 +117,9 @@ jobs:
       - name: Run core and isolated UI tests
         run: ./Test.ps1 -Integration
       - name: Build Windows installation wizard
-        run: ./scripts/Build-WindowsInstaller.ps1 -Version v3.0.0-preview.9 -OutputDirectory build/installers
+        run: ./scripts/Build-WindowsInstaller.ps1 -Version v3.0.0-preview.10 -OutputDirectory build/installers
       - name: Verify isolated install, upgrade and uninstall
-        run: ./scripts/Test-WindowsInstaller.ps1 -Version v3.0.0-preview.9
+        run: ./scripts/Test-WindowsInstaller.ps1 -Version v3.0.0-preview.10
       - name: Collect isolated installer diagnostics
         if: always()
         run: |
@@ -158,7 +158,7 @@ jobs:
           $package = Join-Path $PWD 'build/package'
           New-Item -ItemType Directory -Path $package -Force | Out-Null
           # 只打包明确列出的公开文件，避免混入测试数据和本机配置。
-          foreach ($file in @('build/CodexQuotaStrip.exe', 'build/Start-With-Codex.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) {
+          foreach ($file in @('build/CodexQuotaStrip.exe', 'build/CodexQuotaGuard.exe', 'build/Start-With-Codex.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) {
             Copy-Item -LiteralPath $file -Destination $package
           }
           Copy-Item -LiteralPath 'build/installers/CodexQuotaStrip-windows-x64-setup.exe' -Destination $package

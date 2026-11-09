@@ -1,6 +1,6 @@
 # Choose an installer and supported environment
 
-[中文](installers.zh-CN.md) | **English** · [Download v3.0.0-preview.9](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.9)
+[中文](installers.zh-CN.md) | **English** · [Download v3.0.0-preview.10](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.10)
 
 Sign in through local Codex first. Minimum requirements below apply to the quota companion; your Codex version has its own system requirements. Quit the companion through its tray/menu-bar menu before updating or uninstalling.
 
@@ -31,6 +31,10 @@ For portable use, extract the ZIP into a stable directory and run CodexQuotaStri
 ```powershell
 .\CodexQuotaStrip.exe --settings
 ```
+
+Preview.10 adds a **Start at Windows login (applies immediately)** switch and **Register watchdog service…** button. Login startup is per-user and needs no administrator rights. The optional watchdog requires administrator authorization by the same account; credentials for a different administrator are rejected. It recovers abnormal exits within the user's login session, respects normal exits, and allows at most three recovery attempts. Both features remain opt-in and are Windows-only in this release.
+
+Keep `CodexQuotaGuard.exe` next to the main executable. Registration copies the service component into a protected Program Files directory; the desktop app still runs with the logged-in user's permissions. Remove the service and disable startup before upgrading, moving or deleting a portable installation. The new uninstaller also removes this installation's registered startup entry and service; cancelling service-removal authorization cancels uninstall and preserves the application.
 
 Uninstall through Windows Settings → Apps or the Start menu entry. User settings.ini, additional user files and Codex account data are preserved. Previously configured custom startup hooks remain; remove them through their original setup if no longer needed.
 
@@ -96,7 +100,7 @@ Preview packages have an ad-hoc integrity signature without Apple Developer ID s
 
 - Linux builds use Ubuntu 22.04 as the baseline. DEB/RPM dependencies are generated from the actual binary. TGZ checks architecture and dynamic libraries; it cannot make incompatible system libraries compatible.
 - Disposable-container checks cover Ubuntu 22.04/24.04, Debian 12 and Fedora 43: installation, dependencies, installed-app X11 UI smoke, reinstall, removal and settings preservation. This does not validate every physical desktop theme or Wayland combination.
-- Hosted Windows checks cover isolated install, upgrade, shortcuts, registry and uninstall. macOS checks cover DMG mounting, actual PKG installation, signatures, universal architectures and UI smoke. Older Windows and physical Windows ARM64 remain unverified; macOS versions beyond the macOS 14 runner are not individually tested.
+- Hosted Windows checks cover isolated install, upgrade, shortcuts, registry and uninstall. macOS 15 checks cover DMG mounting, actual PKG installation, signatures, universal architectures and UI smoke. The macOS deployment target remains 14.0; macOS 14 and other versions are not individually tested. Older Windows and physical Windows ARM64 remain unverified.
 - Linux overlays require X11. Wayland supports tray/settings only and requires desktop AppIndicator support. Real Codex AX following and multiple displays on macOS still need device validation.
 - No prebuilt Linux ARM64, 32-bit Windows, Alpine/musl, Android or iOS packages are provided. A GUI desktop and accessible local Codex are needed; this is not a headless server service.
 

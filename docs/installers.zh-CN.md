@@ -1,6 +1,6 @@
 # 安装包选择与兼容环境
 
-**中文** | [English](installers.en.md) · [下载 v3.0.0-preview.9](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.9)
+**中文** | [English](installers.en.md) · [下载 v3.0.0-preview.10](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.10)
 
 安装前先在本机 Codex 登录。以下最低系统要求指配额程序；Codex 本身还需满足其版本的系统要求。更新或卸载前，先从托盘／菜单栏退出配额程序。
 
@@ -31,6 +31,10 @@
 ```powershell
 .\CodexQuotaStrip.exe --settings
 ```
+
+preview.10 新增 **开机启动（登录后，立即生效）** 开关和 **注册守护服务…** 按钮。自启只登记当前用户，无需管理员；守护服务独立启用，需要当前账号的管理员授权，不接受替换为其他管理员账号的凭据。服务在登录会话中恢复异常退出的配额条，主动退出不会重启，最多尝试恢复三次。两项默认均关闭；本轮新增功能仅用于 Windows。
+
+Windows 包内的 `CodexQuotaGuard.exe` 必须与主程序放在一起。注册后会将服务组件复制到受保护的 Program Files 目录；配额条继续以登录用户的权限运行。升级、移动或删除便携版前，先在配置中移除守护服务，并取消旧目录的自启。新安装器卸载时也会清理本安装登记的自启和服务；取消服务移除授权时，卸载会中止并保留程序。
 
 卸载向导版使用“设置 → 应用 → 已安装的应用”或开始菜单中的卸载入口。卸载保留用户 `settings.ini`、其他自建文件和 Codex 账号数据。之前自行配置的启动钩子也会保留，如不再使用请按原配置方式移除。
 
@@ -98,7 +102,7 @@ macOS 预览包只有 ad-hoc 完整性签名，尚未 Apple Developer ID 签名�
 
 - Linux 产物基于 Ubuntu 22.04 构建；DEB／RPM 按实际二进制自动生成依赖约束。TGZ 有架构及动态库预检，不能使不兼容的系统库自动兼容。
 - Linux 安装验证覆盖 Ubuntu 22.04／24.04、Debian 12 和 Fedora 43 的一次性容器：安装、依赖解析、已安装程序的 X11 UI smoke、重装、卸载和设置保留。容器测试不代表所有真实桌面主题、Wayland 组合均已验证。
-- Windows 云端验证隔离安装、升级、快捷方式、注册项和卸载；macOS 云端验证 DMG 挂载、PKG 实际安装、应用签名／双架构及 UI smoke。旧版 Windows 和 Windows ARM64 尚未实机验证，macOS 14 以外版本未逐一测试。
+- Windows 云端验证隔离安装、升级、快捷方式、注册项和卸载；macOS 15 云端验证 DMG 挂载、PKG 实际安装、应用签名／双架构及 UI smoke。macOS 最低部署目标仍为 14.0，macOS 14 及其他版本未逐一实机测试。旧版 Windows 和 Windows ARM64 尚未实机验证。
 - Linux 悬浮条需要 X11；Wayland 仅托盘／配置窗口，桌面需支持 AppIndicator。macOS 实际 Codex AX 跟随、多显示器仍待设备验证。
 - 当前不提供 Linux ARM64、32 位 Windows、Alpine/musl、Android 或 iOS 的成品包。需要 GUI 桌面和可访问的本机 Codex；不是无桌面服务器服务。
 

@@ -10,7 +10,7 @@ It is intended for Codex desktop or CLI users who want visible quota values and 
 
 Built with C++17 and native platform interfaces, without Electron or WebView. Chinese/English can be selected in Settings and applied immediately. This is an independently running companion, not affiliated with OpenAI. See [README.md](README.md) for the Chinese guide.
 
-**[Download v3.0.0-preview.9](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.9)** · [What's new](docs/releases/v3.0.0-preview.9.en.md) · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
+**[Download v3.0.0-preview.10](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.10)** · [What's new](docs/releases/v3.0.0-preview.10.en.md) · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
 
 Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 
@@ -28,6 +28,7 @@ Commands and detailed settings below primarily describe Windows. Use the separat
 | Manual refresh and status | Refresh from the tray/menu bar or settings window and view quota/refresh status. The stale-data threshold is adjustable from 1–120 minutes, with a 5-minute default. |
 | Chinese and English UI | Choose Chinese or English in Settings. Saving immediately updates labels, menus and status messages; the choice survives restart. |
 | Native settings window | Set the refresh interval, stale threshold, query conditions and display position through a GUI. Windows uses a native dark style; Linux/macOS use their platform interfaces. |
+| Windows login startup and watchdog | Independently enable per-user startup and an optional system service. Recover abnormal exits, respect normal exits, and keep the desktop app under the signed-in user's permissions. |
 | Local account and settings | Queries use the signed-in local Codex and selected data directory. Settings stay on the computer; authentication changes clear the previous account snapshot. |
 | Reuse Codex proxy settings | Queries read Codex proxy environment settings automatically, without configuring a separate endpoint in the companion. |
 | Quota change history | Daily CSV files in a selected directory contain remaining quotas, changes in percentage points, source and timestamps; view them as a native list or chart. |
@@ -79,7 +80,7 @@ Open the history viewer from Settings or the tray/menu bar and select **Work req
 - Quota columns show **reference account snapshot changes**. They may include concurrent requests, and the starting snapshot may predate the request. They are not an individually attributable charge. Reset/authentication boundaries do not produce cross-boundary quota differences.
 - Local events do not provide verifiable actual charges per request: the amount is “—”, and actual amount/currency CSV fields stay empty. Subscription percentages cannot be converted into dollars; [official pricing guidance](https://learn.chatgpt.com/docs/pricing) distinguishes API token prices from subscription usage.
 - All platforms use filesystem events: initial per-file tails are limited to 256 KiB; tracked requests allow up to 8 MiB for one catch-up. Final-response text is streamed away, retaining a 32 KiB metadata-buffer limit. Gaps beyond these bounds yield partial records where identifiable; unrecoverable events may be missed, and full historical recovery is not promised. Viewing is limited to the latest 30 days, 2,000 rows/2 MiB, without additional online queries, model requests or polling.
-- History, request usage and source conversations are included in v3.0.0-preview.9. Quit the previous app before updating; settings and existing CSV files are preserved.
+- History, request usage and source conversations are included in v3.0.0-preview.10. Quit the previous app before updating; settings and existing CSV files are preserved.
 
 ### Low-resource design
 
@@ -325,9 +326,13 @@ $quotaShortcut.WorkingDirectory = Split-Path -Parent $quotaExe
 $quotaShortcut.Save()
 ```
 
-### Start at Windows sign-in
+### Windows sign-in startup and watchdog
 
-Create a shortcut in the current user's Startup folder. This starts **at Windows sign-in**, not exclusively with Codex; the default `only_with_codex=1` limits scheduled queries while the desktop app is not open.
+Starting with v3.0.0-preview.10, Windows Settings provides **Start at Windows login (applies immediately)**. Click the right-hand slider; labels and blank row space do not activate it. This manages the current user's login entry without administrator access. Switching it off removes this installation's entry. Windows startup-app policies can still disable or delay it. Manage any previously created manual Startup shortcut separately to avoid duplicate launches.
+
+For crash recovery, select **Register watchdog service…** and approve elevation with the same Windows account. The service watches the strip once it starts for that signed-in user. Enable sign-in startup as well to start and watch it automatically after login. Recovery stays in the same signed-in session, with bounded retries. A normal tray exit, sign-out, or service stop does not relaunch it. For portable builds, remove the service and clear startup in Settings before moving or deleting the files.
+
+For earlier versions without the checkbox, you can create a shortcut in the current user's Startup folder:
 
 ```powershell
 $quotaExe = (Resolve-Path .\build\CodexQuotaStrip.exe).Path

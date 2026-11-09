@@ -10,7 +10,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 
 程序使用 C++17 和原生系统界面，不依赖 Electron 或 WebView。中文／English 可在设置中切换并保存，立即生效。它是独立运行的辅助程序，与 OpenAI 没有官方隶属关系。英文说明见 [README.en.md](README.en.md)。
 
-**[下载 v3.0.0-preview.9](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.9)** · [本版更新](docs/releases/v3.0.0-preview.9.zh-CN.md) · [安装包选择／兼容环境／安装与卸载](docs/installers.zh-CN.md) · [Linux／macOS 构建](docs/native-desktop.zh-CN.md)
+**[下载 v3.0.0-preview.10](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.10)** · [本版更新](docs/releases/v3.0.0-preview.10.zh-CN.md) · [安装包选择／兼容环境／安装与卸载](docs/installers.zh-CN.md) · [Linux／macOS 构建](docs/native-desktop.zh-CN.md)
 
 下文的命令及详细配置主要针对 Windows；Linux／macOS 请使用上面的独立原生指南。
 
@@ -28,6 +28,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 | 手动刷新与状态提示 | 从托盘／菜单栏或配置窗口立即刷新，查看当前额度及刷新状态；旧数据提示阈值可设为 1–120 分钟，默认 5 分钟。 |
 | 中英文界面 | 设置中选择“中文”或“English”，保存后即时更新界面、菜单和状态提示，重启后保留选择。 |
 | 原生配置窗口 | 图形界面设置刷新间隔、旧数据提示、查询条件和显示位置；Windows 提供原生深色样式，Linux／macOS 使用各自系统界面。 |
+| Windows 登录自启与守护 | 配置中独立启用登录自启和可选系统服务；服务恢复异常退出，主动退出保持关闭，配额界面仍使用登录用户权限。 |
 | 本机账号与设置 | 使用已登录的本机 Codex 和指定的数据目录查询；设置保存在本机，认证信息变化时清除旧账号快照。 |
 | 自动复用 Codex 代理 | 查询前读取 Codex 的代理环境配置，无需给配额程序另填代理节点。 |
 | 额度变化日志 | 在自选目录按日保存 CSV，记录剩余额度、变化百分点、来源和时间；可用列表或原生图表查看。 |
@@ -79,7 +80,7 @@ API Key 或第三方 Token 模式下，托盘直接显示 `Tok` 和本次已记�
 - 额度列是**账户参考快照变化**，可能包含并发请求，起点快照也可能早于请求开始；它不是单请求独立扣费，周期重置或认证切换不计算跨边界差值。
 - 本地事件没有可验证的逐请求实际金额，金额显示“—”，CSV 的实际金额／币种留空。Pro／Plus 订阅百分比不能换算为美元；[官方计价说明](https://learn.chatgpt.com/docs/pricing)区分 API Token 计价与订阅使用量。
 - 三平台使用文件事件监听，初读单文件最多最新 256 KiB；已追踪请求允许最多 8 MiB 的一次追赶，最终回复正文流式跳过、元数据缓冲上限仍为 32 KiB。超过读取上限时只保留仍可解析的部分记录，无法恢复的事件可能遗漏；不承诺恢复未监听时的全部历史。查看记录沿用最近 30 天、2000 行／2 MiB 上限，不增加在线配额查询、模型请求或后台轮询。
-- 历史、请求用量与所属对话功能均包含在 v3.0.0-preview.9 下载包中。升级前退出旧程序；设置和原有 CSV 保留。
+- 历史、请求用量与所属对话功能均包含在 v3.0.0-preview.10 下载包中。升级前退出旧程序；设置和原有 CSV 保留。
 
 ### 低资源占用设计
 
@@ -325,9 +326,13 @@ $quotaShortcut.WorkingDirectory = Split-Path -Parent $quotaExe
 $quotaShortcut.Save()
 ```
 
-### Windows 登录自启
+### Windows 登录自启与守护服务
 
-在当前用户启动目录创建快捷方式。此方式**随 Windows 登录启动**，不等同于只随 Codex 启动；默认 `only_with_codex=1` 限制桌面版未打开时的定时在线查询。
+从 v3.0.0-preview.10 起，Windows 版配置中可开启 **开机启动（登录后，立即生效）**。只点击右侧滑块即可切换，文字和行内空白不会触发。它只登记当前用户的启动项，无需管理员权限；关闭会移除本安装的登记。Windows 的启动应用策略仍可禁用或延迟它。若先前手动创建过启动快捷方式，请按原方式管理，避免重复启动。
+
+需要异常退出自动恢复时，另点 **注册守护服务…**，以当前账号批准管理员提示。服务跟踪该账号已经启动的配额条；勾选自启后，每次登录可自动启动并进入守护。服务不在登录前运行配额窗口。崩溃时在同一登录会话有限重试；从托盘主动退出、注销或停止服务不会重启。不要移动或删除便携版文件后再移除服务：应先在配置中移除服务，再取消自启。
+
+旧版没有勾选项时，也可在当前用户启动目录创建快捷方式：
 
 ```powershell
 $quotaExe = (Resolve-Path .\build\CodexQuotaStrip.exe).Path
