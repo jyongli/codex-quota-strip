@@ -1,4 +1,4 @@
-param([switch]$Tests, [switch]$UiProbe, [switch]$VisibilityTests, [switch]$TrayIconTests, [switch]$LayerTests, [ValidateSet('HistoryTests','RequestTests','HistoryUiTests','SettingsTests','ConfigUiTests','LifecycleTests','WeeklyDisplayTests','TokenDisplayTests','ProviderProbe','ProviderEnvironmentTests','ProxyConfigTests')][string]$Extra, [string]$OutputDirectory = $PSScriptRoot)
+param([switch]$Tests, [switch]$UiProbe, [switch]$VisibilityTests, [switch]$TrayIconTests, [switch]$LayerTests, [ValidateSet('HistoryTests','RequestTests','HistoryUiTests','SettingsTests','ConfigUiTests','LifecycleTests','WeeklyDisplayTests','TokenDisplayTests','ProviderProbe','ProviderEnvironmentTests','ProxyConfigTests','LoginStartupTests','GuardTests','QuotaGuard')][string]$Extra, [string]$OutputDirectory = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) { throw 'Visual Studio Installer / vswhere was not found. Install Visual Studio 2022 C++ Build Tools and a Windows SDK.' }
@@ -21,6 +21,7 @@ try {
     $source = if ($Tests) { 'QuotaTests.cpp' } elseif ($UiProbe) { 'UiProbe.cpp' } elseif ($VisibilityTests) { 'VisibilityTests.cpp' } elseif ($TrayIconTests) { 'TrayIconTests.cpp' } elseif ($LayerTests) { 'LayerTests.cpp' } else { 'QuotaStrip.cpp' }
     $target = if ($Tests) { 'QuotaTests.exe' } elseif ($UiProbe) { 'UiProbe.exe' } elseif ($VisibilityTests) { 'VisibilityTests.exe' } elseif ($TrayIconTests) { 'TrayIconTests.exe' } elseif ($LayerTests) { 'LayerTests.exe' } else { 'CodexQuotaStrip.exe' }
     if ($Extra) { $source = $Extra + '.cpp'; $target = $Extra + '.exe' }
+    if ($Extra -eq 'QuotaGuard') { $target = 'CodexQuotaGuard.exe' }
     $resource = $null
     if ($source -eq 'QuotaStrip.cpp') {
         # 应用图标嵌入 EXE，快捷方式和卸载入口无需额外的运行时图标文件。
@@ -34,7 +35,9 @@ try {
     $arguments = @('/nologo','/std:c++17','/EHsc','/W4','/utf-8','/O2','/MT','/DUNICODE','/D_UNICODE','/D_CRT_SECURE_NO_WARNINGS',('/Fe:' + (Join-Path $OutputDirectory $target)),(Join-Path $PSScriptRoot $source))
     if ($resource) { $arguments += $resource }
     if($source -in @('QuotaStrip.cpp','ProviderProbe.cpp','ProviderEnvironmentTests.cpp')){$arguments+=(Join-Path $PSScriptRoot 'QuotaProvider.cpp')}
-    if ($UiProbe -or $VisibilityTests -or $TrayIconTests -or $LayerTests -or $Extra) { $arguments += @('/link','user32.lib','gdi32.lib','shell32.lib','dwmapi.lib','comctl32.lib') }
+    # 守护管理程序会提权，导入 DLL 固定从系统目录加载。
+    if ($Extra -eq 'QuotaGuard') { $arguments += @('/link','/SUBSYSTEM:WINDOWS','/DEPENDENTLOADFLAG:0x800','user32.lib') }
+    elseif ($UiProbe -or $VisibilityTests -or $TrayIconTests -or $LayerTests -or $Extra) { $arguments += @('/link','user32.lib','gdi32.lib','shell32.lib','dwmapi.lib','comctl32.lib') }
     elseif (-not $Tests) { $arguments += @('/link','/SUBSYSTEM:WINDOWS','user32.lib','gdi32.lib','comctl32.lib','shell32.lib','advapi32.lib','dwmapi.lib','imm32.lib','uxtheme.lib') }
     & $compiler @arguments
     if ($LASTEXITCODE -ne 0) { throw "Compilation failed with exit code $LASTEXITCODE" }

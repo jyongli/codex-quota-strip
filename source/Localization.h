@@ -7,6 +7,21 @@ inline const wchar_t* Translate(const wchar_t* chinese, bool english) {
     if (!english) return chinese;
     struct Text { const wchar_t* chinese; const wchar_t* english; };
     static const Text entries[] = {
+        {L"注册守护服务…",L"Register watchdog service…"},
+        {L"移除守护服务…",L"Remove watchdog service…"},
+        {L"正在更改守护服务…",L"Updating the watchdog service…"},
+        {L"未找到守护服务组件。",L"Watchdog service component is missing."},
+        {L"守护服务已由另一安装或账号注册。",L"The service belongs to another installation or user."},
+        {L"无法确认守护服务状态。",L"Could not check the watchdog service."},
+        {L"守护服务已注册；主动退出不重启。",L"Watchdog registered; a normal exit stays closed."},
+        {L"守护服务未注册；需当前账号的管理员权限。",L"Not registered; your account needs administrator access."},
+        {L"已取消守护服务操作。",L"Watchdog operation cancelled."},
+        {L"无法更改守护服务，错误：",L"Could not change the watchdog service. Error: "},
+        {L"开机启动（登录后，立即生效）",L"Start at Windows login (applies immediately)"},
+        {L"勾选后在登录 Windows 时启动配额条，无需管理员权限。",L"Starts the strip at Windows login; no administrator access is needed."},
+        {L"自启项由其他安装或自定义命令占用。",L"The login entry belongs to another installation or custom command."},
+        {L"无法读取登录启动项。",L"Could not read the Windows login entry."},
+        {L"无法更改登录启动项，错误：",L"Could not change the Windows login entry. Error: "},
         {L"已用",L"Used"},{L"剩余",L"Left"},{L"本次已用 ",L"Run used "},{L"剩余 —",L"Left —"},
         {L"本机本次已用 Token",L"Local run tokens used"},{L"账户剩余",L"Account remaining"},
         {L"本次运行已记录 ",L"Recorded this run: "},{L"；剩余量未提供。",L"; remaining unavailable."},

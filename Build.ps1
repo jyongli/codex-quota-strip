@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('App','QuotaTests','HistoryTests','RequestTests','HistoryUiTests','SettingsTests','TrayIconTests','LifecycleTests','ConfigUiTests','WeeklyDisplayTests','TokenDisplayTests','UiProbe','LayerTests','VisibilityTests','ProviderProbe','ProviderEnvironmentTests','ProxyConfigTests')]
+    [ValidateSet('App','QuotaTests','HistoryTests','RequestTests','HistoryUiTests','SettingsTests','TrayIconTests','LifecycleTests','ConfigUiTests','WeeklyDisplayTests','TokenDisplayTests','UiProbe','LayerTests','VisibilityTests','ProviderProbe','ProviderEnvironmentTests','ProxyConfigTests','LoginStartupTests','GuardTests','QuotaGuard')]
     [string]$Target = 'App',
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'build')
 )
@@ -18,6 +18,7 @@ switch ($Target) {
 }
 & (Join-Path $PSScriptRoot 'source\Build.ps1') @selection -OutputDirectory $OutputDirectory
 if ($Target -eq 'App') {
+    & (Join-Path $PSScriptRoot 'source\Build.ps1') -Extra QuotaGuard -OutputDirectory $OutputDirectory
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'source\Start-With-Codex.ps1') -Destination $OutputDirectory
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'THIRD_PARTY_NOTICES.md') -Destination $OutputDirectory
 }
