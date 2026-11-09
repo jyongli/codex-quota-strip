@@ -1,14 +1,14 @@
-﻿#ifndef RepoRoot
+#ifndef RepoRoot
   #error RepoRoot must be supplied by Build-WindowsInstaller.ps1
 #endif
 #ifndef PayloadRoot
   #error PayloadRoot must be supplied by Build-WindowsInstaller.ps1
 #endif
 #ifndef AppVersion
-  #define AppVersion "3.0.0-preview.9"
+  #define AppVersion "3.0.0-preview.10"
 #endif
 #ifndef NumericVersion
-  #define NumericVersion "3.0.0.9"
+  #define NumericVersion "3.0.0.10"
 #endif
 #ifndef OutputRoot
   #define OutputRoot RepoRoot + "\dist"
@@ -63,7 +63,7 @@ AllowNoIcons=yes
 UninstallDisplayIcon={app}\CodexQuotaStrip.exe
 SetupIconFile={#RepoRoot}\assets\icons\app.ico
 UninstallDisplayName={#InstallerName}
-; 不使用 Restart Manager 关闭程序，更不安装登录自启或修改 Codex 启动 hook。
+; 不使用 Restart Manager 关闭程序；自启和服务由用户在设置中单独启用。
 CloseApplications=no
 RestartApplications=no
 UninstallLogMode=append
@@ -90,6 +90,8 @@ english.CloseApp=CodexQuotaStrip from this installation folder is still running.
 chinesesimplified.CloseApp=此安装目录中的 Codex 配额仍在运行。请通过托盘菜单退出后重试，或取消操作。安装程序不会自动关闭任何程序。
 english.ProcessCheckFailed=Unable to check running processes. Cancel and retry after Windows Management Instrumentation is available.
 chinesesimplified.ProcessCheckFailed=无法检查运行中的进程。请取消操作，并在 Windows Management Instrumentation 可用后重试。
+english.StartupCleanupFailed=Could not remove this installation's login entry or watchdog service. Remove the watchdog in Settings first, exit the app, then retry.
+chinesesimplified.StartupCleanupFailed=无法清除此安装的登录启动项或守护服务。请先在配置中移除服务，退出程序后再重试。
 english.InstallInfo=Windows 10 1809 or later is required. This is an x64 application. Windows 11 ARM64 may run it through x64 emulation; ARM64 has not been tested on physical hardware.%n%nNo compiler or Visual C++ runtime installation is required. Setup does not enable login startup or change your Codex launcher.%n%nUpgrades and uninstall preserve settings.ini and other user-created files. Codex account data and existing custom startup hooks are untouched.
 chinesesimplified.InstallInfo=需要 Windows 10 1809 或更新版本。本程序为 x64 应用。Windows 11 ARM64 可以通过 x64 模拟运行，但 ARM64 尚未经过实机验证。%n%n无需安装编译器或 Visual C++ 运行库。安装程序不会启用登录自启或修改 Codex 启动器。%n%n升级和卸载保留 settings.ini 及其他用户自建文件，不修改 Codex 账号数据和已有自定义启动 hook。
 
@@ -99,6 +101,7 @@ Name: "desktopicon"; Description: "{cm:DesktopTask}"; Flags: unchecked
 [Files]
 ; 逐项登记安装文件；设置文件不进入安装/卸载清单，也不使用通配符删除。
 Source: "{#PayloadRoot}\CodexQuotaStrip.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadRoot}\CodexQuotaGuard.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadRoot}\Start-With-Codex.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadRoot}\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#RepoRoot}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
@@ -136,20 +139,21 @@ function RunningAppMessage: String;
 var
   Locator, Services, Processes, Process, ExecutablePath: Variant;
   Index: Integer;
-  Target: String;
+  Target, GuardHelper: String;
 begin
   Result := '';
   Target := ExpandConstant('{app}\CodexQuotaStrip.exe');
+  GuardHelper := ExpandConstant('{app}\CodexQuotaGuard.exe');
   if not FileExists(Target) then exit;
   try
     Locator := CreateOleObject('WbemScripting.SWbemLocator');
     Services := Locator.ConnectServer('', 'root\CIMV2');
-    Processes := Services.ExecQuery('SELECT ExecutablePath FROM Win32_Process WHERE Name = ''CodexQuotaStrip.exe''');
+    Processes := Services.ExecQuery('SELECT ExecutablePath FROM Win32_Process WHERE Name = ''CodexQuotaStrip.exe'' OR Name = ''CodexQuotaGuard.exe''');
     for Index := 0 to Processes.Count - 1 do begin
       Process := Processes.ItemIndex(Index);
       ExecutablePath := Process.ExecutablePath;
       if not VarIsNull(ExecutablePath) then
-        if CompareText(ExecutablePath, Target) = 0 then begin
+        if (CompareText(ExecutablePath, Target) = 0) or (CompareText(ExecutablePath, GuardHelper) = 0) then begin
           Result := CustomMessage('CloseApp');
           exit;
         end;
@@ -201,5 +205,26 @@ begin
       exit;
     end;
     if SuppressibleMsgBox(MessageText, mbError, MB_RETRYCANCEL, IDCANCEL) <> IDRETRY then exit;
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  MessageText: String;
+  ExitCode: Integer;
+begin
+  if CurUninstallStep <> usUninstall then exit;
+  // 此事件在确认卸载之后、删除文件之前。点“否”不会清理自启或服务。
+  MessageText := RunningAppMessage;
+  if MessageText <> '' then RaiseException(MessageText);
+  if FileExists(ExpandConstant('{app}\CodexQuotaStrip.exe')) then begin
+    Log('Cleaning up startup/service integration.');
+    if not Exec(ExpandConstant('{app}\CodexQuotaStrip.exe'), '--cleanup-integration', '',
+      SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+      ExitCode := -1;
+    if ExitCode <> 0 then begin
+      Log('Startup/service cleanup failed: ' + IntToStr(ExitCode));
+      RaiseException(CustomMessage('StartupCleanupFailed'));
+    end;
   end;
 end;

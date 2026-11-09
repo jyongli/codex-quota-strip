@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '3.0.0-preview.9',
+    [string]$Version = '3.0.0-preview.10',
     [string]$PayloadDirectory = (Join-Path (Split-Path $PSScriptRoot -Parent) 'build'),
     [string]$CompilerPath
 )
@@ -15,6 +15,57 @@ $fixtures = [Collections.Generic.List[object]]::new()
 
 function Assert-Condition([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
+}
+
+function Invoke-CancelledUninstall([string]$FilePath,[string]$LogPath) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class QuotaInstallerConfirmation {
+    public delegate bool EnumWindow(IntPtr window,IntPtr parameter);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindow callback,IntPtr parameter);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window,out uint pid);
+    [DllImport("user32.dll")] static extern IntPtr GetDlgItem(IntPtr dialog,int id);
+    [DllImport("user32.dll")] static extern bool PostMessageW(IntPtr window,uint message,IntPtr wp,IntPtr lp);
+    public static bool Cancel(uint[] ids) {
+        var allowed=new HashSet<uint>(ids);bool cancelled=false;
+        EnumWindows(delegate(IntPtr window,IntPtr unused) {
+            uint pid;GetWindowThreadProcessId(window,out pid);if(!allowed.Contains(pid))return true;
+            var no=GetDlgItem(window,7);var yes=GetDlgItem(window,6);
+            if(no==IntPtr.Zero||yes==IntPtr.Zero)return true;
+            cancelled=PostMessageW(no,0xF5,IntPtr.Zero,IntPtr.Zero);return !cancelled;
+        },IntPtr.Zero);
+        return cancelled;
+    }
+}
+'@
+    $start=[Diagnostics.ProcessStartInfo]::new($FilePath)
+    $start.UseShellExecute=$false;$start.CreateNoWindow=$true
+    foreach($arg in @('/NORESTART',"/LOG=$LogPath")){[void]$start.ArgumentList.Add($arg)}
+    $process=[Diagnostics.Process]::Start($start)
+    try {
+        $deadline=[DateTime]::UtcNow.AddSeconds(15);$cancelled=$false
+        do {
+            # 卸载器会复制自己到 TEMP；只枚举本次进程及其子孙进程，绝不点击其他窗口。
+            $owned=[Collections.Generic.HashSet[uint32]]::new();[void]$owned.Add([uint32]$process.Id)
+            $snapshot=@(Get-CimInstance Win32_Process)
+            do {
+                $changed=$false
+                foreach($child in $snapshot){if($owned.Contains([uint32]$child.ParentProcessId)){$changed=$owned.Add([uint32]$child.ProcessId)-or $changed}}
+            }while($changed)
+            $cancelled=[QuotaInstallerConfirmation]::Cancel([uint32[]]@($owned))
+            if($cancelled-or $process.HasExited){break}
+            Start-Sleep -Milliseconds 80
+        }while([DateTime]::UtcNow -lt $deadline)
+        Assert-Condition $cancelled 'Uninstall confirmation did not appear in the owned process tree.'
+        Assert-Condition ($process.WaitForExit(5000)) 'Cancelled uninstaller did not exit.'
+        $log=[IO.File]::ReadAllText($LogPath)
+        Assert-Condition ($log-notmatch 'Cleaning up startup/service integration\.') 'Cancelling confirmation must not execute startup/service cleanup.'
+    } finally {
+        if(-not $process.HasExited){$process.Kill($true);[void]$process.WaitForExit(5000)}
+        $process.Dispose()
+    }
 }
 
 # 外部程序返回值原样传播；参数逐个传递，不依赖 shell 拼接或引用转义。
@@ -49,7 +100,7 @@ function Invoke-CheckedProcess([string]$FilePath, [string[]]$Arguments, [string]
 }
 
 function Assert-Payload([string]$InstallPath, [string]$PayloadPath, [string]$LicensePath) {
-    foreach ($name in @('CodexQuotaStrip.exe', 'Start-With-Codex.ps1', 'THIRD_PARTY_NOTICES.md', 'LICENSE')) {
+    foreach ($name in @('CodexQuotaStrip.exe', 'CodexQuotaGuard.exe', 'Start-With-Codex.ps1', 'THIRD_PARTY_NOTICES.md', 'LICENSE')) {
         $expected = if ($name -eq 'LICENSE') { $LicensePath } else { Join-Path $PayloadPath $name }
         $actual = Join-Path $InstallPath $name
         Assert-Condition (Test-Path -LiteralPath $actual -PathType Leaf) "Installed payload missing: $name"
@@ -154,7 +205,7 @@ try {
     $registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\${testAppId}_is1"
     Assert-Condition (-not (Test-Path -LiteralPath $registryPath)) 'Refusing to reuse an existing test registration.'
     [void](New-Item -ItemType Directory -Path $payloadPath -Force)
-    foreach ($name in @('CodexQuotaStrip.exe', 'Start-With-Codex.ps1', 'THIRD_PARTY_NOTICES.md')) {
+    foreach ($name in @('CodexQuotaStrip.exe', 'CodexQuotaGuard.exe', 'Start-With-Codex.ps1', 'THIRD_PARTY_NOTICES.md')) {
         Copy-Item -LiteralPath (Join-Path $PayloadDirectory $name) -Destination $payloadPath
     }
     $licensePath = Join-Path $repoRoot 'LICENSE'
@@ -177,7 +228,7 @@ try {
     Assert-Payload $installPath $payloadPath $licensePath
     Assert-TestRegistration $baseVersion
     Assert-Condition (-not (Test-Path -LiteralPath (Join-Path $testRoot 'desktop\CodexQuotaStrip.lnk'))) 'Desktop shortcut must be opt-in.'
-    # skipifsilent 禁用结束启动；不启动真实程序，也不访问账号或执行 Windows UI 自动化。
+    # skipifsilent 禁用结束启动；后面的交互取消测试只操作本次卸载器，不访问账号。
     $running = @(Get-CimInstance Win32_Process -Filter "Name='CodexQuotaStrip.exe'" | Where-Object { $_.ExecutablePath -eq (Join-Path $installPath 'CodexQuotaStrip.exe') })
     Assert-Condition ($running.Count -eq 0) 'Silent setup unexpectedly launched the installed application.'
     $shell = New-Object -ComObject WScript.Shell
@@ -209,6 +260,12 @@ try {
     Stop-HeadlessFixture $installedFixture
     $steps.Add('Same-path running process blocked upgrade/uninstall with intact payload; neither owned process was stopped.')
 
+    Invoke-CancelledUninstall (Join-Path $installPath 'unins000.exe') (Join-Path $testRoot 'cancelled-uninstall.log')
+    Assert-Payload $installPath $payloadPath $licensePath
+    Assert-TestRegistration $baseVersion
+    Assert-Condition (-not $otherFixture.Process.HasExited) 'Cancelled uninstall stopped the other installation.'
+    $steps.Add('Cancelled interactive uninstall preserved payload/registration and never invoked startup/service cleanup.')
+
     # 合成用户设置与额外文件均只写入临时目录，覆盖卸载不可递归删目录的边界。
     $settingsPath = Join-Path $installPath 'settings.ini'
     [IO.File]::WriteAllText($settingsPath, "[refresh]`r`nonline=0`r`nseconds=97`r`n[display]`r`nlanguage=en`r`n")
@@ -235,7 +292,7 @@ try {
     Assert-TestRegistration $Version
     Invoke-CheckedProcess (Join-Path $installPath 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$(Join-Path $testRoot 'uninstall.log')") 'Silent uninstall'
     $uninstalled = $true
-    foreach ($name in @('CodexQuotaStrip.exe', 'Start-With-Codex.ps1', 'THIRD_PARTY_NOTICES.md', 'LICENSE')) {
+    foreach ($name in @('CodexQuotaStrip.exe', 'CodexQuotaGuard.exe', 'Start-With-Codex.ps1', 'THIRD_PARTY_NOTICES.md', 'LICENSE')) {
         Assert-Condition (-not (Test-Path -LiteralPath (Join-Path $installPath $name))) "Uninstall left installed payload: $name"
     }
     Assert-Condition (-not (Test-Path -LiteralPath $registryPath)) 'Test uninstall registration remained.'

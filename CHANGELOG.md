@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v3.0.0-preview.10 — 2026-11-09
+
+- Windows 配置页改为紧凑布局：内容高度由 994 缩至 734 个逻辑像素，显示／语言并排，目录与服务状态同排，保留正文大小、小屏滚动和中英文显示。 / Compact Windows settings from 994 to 734 logical pixels with side-by-side display/language selectors and inline directory/service controls, preserving body text size, small-screen scrolling and both languages.
+- Windows 配置开关仅响应右侧滑块区域的鼠标点击，点击标签／空白或移出滑块后松开不切换；收起的下拉框将滚轮交给配置页，不再误改选项，保留键盘与展开列表操作。 / Restrict Windows switch mouse activation to the slider and cancel release outside it; forward wheel input from closed selectors to the settings page without changing selections, retaining keyboard and open-list behavior.
+- Windows 配置开关完整重绘，消除左侧原生框残留与右侧状态不同步；滚动直接批量移动控件并对设置页双缓冲，减少闪烁。 / Repaint Windows settings switches completely to remove native checkbox remnants and stale tracks; batch controls directly to their scrolled positions and double-buffer the settings page to reduce flicker.
+- Windows 配置新增独立的登录自启和可选系统守护服务。自启无需提权，服务仅守护已登录用户的配额进程，异常退出有限重试，正常退出不重启。 / Add independent Windows login startup and an opt-in watchdog service. Startup needs no elevation; the watchdog recovers a signed-in user's crashed strip with bounded retries and honors a normal exit.
+
 ## v3.0.0-preview.9 — 2026-11-04
 
 - API／Token 模式直接显示本机本次运行已记录的 Token，剩余保持 —；按持久化去重结果累计，不重复缓存／推理子项；支持未知／部分下限、账号与配置边界重计和中英文显示，不增加网络查询。 / Display local tokens recorded this run directly in API/Token mode with unknown remaining balance; count only persisted deduplicated requests, preserve partial lower bounds and authentication/configuration resets, and localize both languages without additional network queries.

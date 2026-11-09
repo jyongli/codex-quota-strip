@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '3.0.0-preview.9',
+    [string]$Version = '3.0.0-preview.10',
     [string]$PayloadDirectory = (Join-Path (Split-Path $PSScriptRoot -Parent) 'build'),
     [string]$OutputDirectory = (Join-Path (Split-Path $PSScriptRoot -Parent) 'dist'),
     [string]$CompilerPath,
@@ -21,7 +21,7 @@ try {
     $parts = @($Matches[1], $Matches[2], $Matches[3], $(if ($Matches[4]) { $Matches[4] } else { '0' }))
     if (@($parts | Where-Object { [long]$_ -gt 65535 }).Count) { throw 'Numeric version components must not exceed 65535.' }
     $numericVersion = $parts -join '.'
-    foreach ($file in @('CodexQuotaStrip.exe', 'Start-With-Codex.ps1', 'THIRD_PARTY_NOTICES.md')) {
+    foreach ($file in @('CodexQuotaStrip.exe', 'CodexQuotaGuard.exe', 'Start-With-Codex.ps1', 'THIRD_PARTY_NOTICES.md')) {
         if (-not (Test-Path -LiteralPath (Join-Path $PayloadDirectory $file) -PathType Leaf)) {
             throw "Missing payload $file. Run ./Build.ps1 -Target App first."
         }

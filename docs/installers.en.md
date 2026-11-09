@@ -1,6 +1,6 @@
 # Choose an installer and supported environment
 
-[中文](installers.zh-CN.md) | **English** · [Download v3.0.0-preview.9](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.9)
+[中文](installers.zh-CN.md) | **English** · [Download v3.0.0-preview.10](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.10)
 
 Sign in through local Codex first. Minimum requirements below apply to the quota companion; your Codex version has its own system requirements. Quit the companion through its tray/menu-bar menu before updating or uninstalling.
 
@@ -31,6 +31,10 @@ For portable use, extract the ZIP into a stable directory and run CodexQuotaStri
 ```powershell
 .\CodexQuotaStrip.exe --settings
 ```
+
+Preview.10 adds a **Start at Windows login (applies immediately)** switch and **Register watchdog service…** button. Login startup is per-user and needs no administrator rights. The optional watchdog requires administrator authorization by the same account; credentials for a different administrator are rejected. It recovers abnormal exits within the user's login session, respects normal exits, and allows at most three recovery attempts. Both features remain opt-in and are Windows-only in this release.
+
+Keep `CodexQuotaGuard.exe` next to the main executable. Registration copies the service component into a protected Program Files directory; the desktop app still runs with the logged-in user's permissions. Remove the service and disable startup before upgrading, moving or deleting a portable installation. The new uninstaller also removes this installation's registered startup entry and service; cancelling service-removal authorization cancels uninstall and preserves the application.
 
 Uninstall through Windows Settings → Apps or the Start menu entry. User settings.ini, additional user files and Codex account data are preserved. Previously configured custom startup hooks remain; remove them through their original setup if no longer needed.
 

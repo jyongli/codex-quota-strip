@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [Parameter(Mandatory)][string]$Commit,
     [Parameter(Mandatory)][string]$RunUrl,
-    [string]$Version = 'v3.0.0-preview.9'
+    [string]$Version = 'v3.0.0-preview.10'
 )
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
@@ -37,7 +37,7 @@ $portable=Join-Path ([IO.Path]::GetTempPath()) ('quota-release-portable-'+[Guid]
 New-Item -ItemType Directory -Path $portable | Out-Null
 try {
     $windows=Join-Path $ArtifactRoot 'codex-quota-strip-windows-x64'
-    foreach ($name in @('CodexQuotaStrip.exe','Start-With-Codex.ps1','LICENSE','THIRD_PARTY_NOTICES.md','BUILD-INFO.txt')) {
+    foreach ($name in @('CodexQuotaStrip.exe','CodexQuotaGuard.exe','Start-With-Codex.ps1','LICENSE','THIRD_PARTY_NOTICES.md','BUILD-INFO.txt')) {
         Copy-Item -LiteralPath (Join-Path $windows $name) -Destination $portable
     }
     Write-Checksums $portable
