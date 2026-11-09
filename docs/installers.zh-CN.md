@@ -102,7 +102,7 @@ macOS 预览包只有 ad-hoc 完整性签名，尚未 Apple Developer ID 签名�
 
 - Linux 产物基于 Ubuntu 22.04 构建；DEB／RPM 按实际二进制自动生成依赖约束。TGZ 有架构及动态库预检，不能使不兼容的系统库自动兼容。
 - Linux 安装验证覆盖 Ubuntu 22.04／24.04、Debian 12 和 Fedora 43 的一次性容器：安装、依赖解析、已安装程序的 X11 UI smoke、重装、卸载和设置保留。容器测试不代表所有真实桌面主题、Wayland 组合均已验证。
-- Windows 云端验证隔离安装、升级、快捷方式、注册项和卸载；macOS 云端验证 DMG 挂载、PKG 实际安装、应用签名／双架构及 UI smoke。旧版 Windows 和 Windows ARM64 尚未实机验证，macOS 14 以外版本未逐一测试。
+- Windows 云端验证隔离安装、升级、快捷方式、注册项和卸载；macOS 15 云端验证 DMG 挂载、PKG 实际安装、应用签名／双架构及 UI smoke。macOS 最低部署目标仍为 14.0，macOS 14 及其他版本未逐一实机测试。旧版 Windows 和 Windows ARM64 尚未实机验证。
 - Linux 悬浮条需要 X11；Wayland 仅托盘／配置窗口，桌面需支持 AppIndicator。macOS 实际 Codex AX 跟随、多显示器仍待设备验证。
 - 当前不提供 Linux ARM64、32 位 Windows、Alpine/musl、Android 或 iOS 的成品包。需要 GUI 桌面和可访问的本机 Codex；不是无桌面服务器服务。
 

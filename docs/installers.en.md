@@ -100,7 +100,7 @@ Preview packages have an ad-hoc integrity signature without Apple Developer ID s
 
 - Linux builds use Ubuntu 22.04 as the baseline. DEB/RPM dependencies are generated from the actual binary. TGZ checks architecture and dynamic libraries; it cannot make incompatible system libraries compatible.
 - Disposable-container checks cover Ubuntu 22.04/24.04, Debian 12 and Fedora 43: installation, dependencies, installed-app X11 UI smoke, reinstall, removal and settings preservation. This does not validate every physical desktop theme or Wayland combination.
-- Hosted Windows checks cover isolated install, upgrade, shortcuts, registry and uninstall. macOS checks cover DMG mounting, actual PKG installation, signatures, universal architectures and UI smoke. Older Windows and physical Windows ARM64 remain unverified; macOS versions beyond the macOS 14 runner are not individually tested.
+- Hosted Windows checks cover isolated install, upgrade, shortcuts, registry and uninstall. macOS 15 checks cover DMG mounting, actual PKG installation, signatures, universal architectures and UI smoke. The macOS deployment target remains 14.0; macOS 14 and other versions are not individually tested. Older Windows and physical Windows ARM64 remain unverified.
 - Linux overlays require X11. Wayland supports tray/settings only and requires desktop AppIndicator support. Real Codex AX following and multiple displays on macOS still need device validation.
 - No prebuilt Linux ARM64, 32-bit Windows, Alpine/musl, Android or iOS packages are provided. A GUI desktop and accessible local Codex are needed; this is not a headless server service.
 
