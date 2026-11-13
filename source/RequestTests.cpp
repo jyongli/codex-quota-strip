@@ -178,8 +178,11 @@ int main() { try {
     require(tails.size() == 1 && tails[0].threadId=="01234567-89ab-7cde-8fab-0123456789ab" && tails[0].turnId == "huge-tail" && tails[0].partial && tails[0].started == 0 && !tails[0].tokens && follower.bytesRead <= 256 * 1024, "bounded real file tail must preserve source identity and partial completion without reading full conversation");
     auto trackedFile = root / "large-completion.jsonl"; quota::FileFollower tracked; std::vector<quota::RequestEntry> trackedRows;
     auto saveTracked = [&](const auto& row) { trackedRows.push_back(row); };
-    { std::ofstream out(trackedFile, std::ios::binary); out << fresh(event("{\"type\":\"task_started\",\"turn_id\":\"tracked-large\"}")) << '\n' << fresh(firstUsage()) << '\n'; }
-    require(tracked.read(trackedFile.wstring(), {}, saveTracked), "active request fixture must read");
+    auto firstWithQuota = firstUsage(); firstWithQuota.insert(firstWithQuota.size() - 2, ",\"rateLimits\":{\"primary\":{\"usedPercent\":38,\"windowDurationMins\":10080}}");
+    { std::ofstream out(trackedFile, std::ios::binary); out << fresh(event("{\"type\":\"task_started\",\"turn_id\":\"tracked-large\"}")) << '\n' << fresh(firstWithQuota) << '\n'; }
+    quota::Snapshot quotaFromUsage;
+    require(tracked.read(trackedFile.wstring(), [&](const auto& snapshot){ quotaFromUsage = snapshot; }, saveTracked), "active request fixture must read");
+    require(quotaFromUsage.weekly.present && quotaFromUsage.weekly.used == 38, "A real token event with camel-case limits must update the quota while retaining request usage");
     { std::ofstream out(trackedFile, std::ios::binary | std::ios::app); out << fresh(event("{\"type\":\"task_complete\",\"turn_id\":\"tracked-large\",\"last_agent_message\":\"" + std::string(400 * 1024, 'x') + "\"}")) << '\n'; }
     tracked.read(trackedFile.wstring(), {}, saveTracked);
     require(trackedRows.size() == 1 && trackedRows.front().tokens && trackedRows.front().tokens->total == 130 && !trackedRows.front().partial, "an already tracked request must survive a single 400KiB final-response append");

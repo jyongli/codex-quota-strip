@@ -32,13 +32,17 @@ try {
         & $resourceCompiler /nologo /c65001 /I $PSScriptRoot /I $iconDirectory /fo $resource (Join-Path $PSScriptRoot 'AppResources.rc')
         if ($LASTEXITCODE -ne 0) { throw "Application icon resource compilation failed with exit code $LASTEXITCODE" }
     }
-    $arguments = @('/nologo','/std:c++17','/EHsc','/W4','/utf-8','/O2','/MT','/DUNICODE','/D_UNICODE','/D_CRT_SECURE_NO_WARNINGS',('/Fe:' + (Join-Path $OutputDirectory $target)),(Join-Path $PSScriptRoot $source))
+    # 发布程序跨编译单元去重；保留静态运行库，免安装包仍无需额外 VC 运行库。
+    $sizeOptimized = $source -in @('QuotaStrip.cpp','QuotaGuard.cpp')
+    $optimization = if ($sizeOptimized) { @('/O1','/GL','/Gw') } else { @('/O2') }
+    $arguments = @('/nologo','/std:c++17','/EHsc','/W4','/utf-8') + $optimization + @('/MT','/DUNICODE','/D_UNICODE','/D_CRT_SECURE_NO_WARNINGS',('/Fe:' + (Join-Path $OutputDirectory $target)),(Join-Path $PSScriptRoot $source))
     if ($resource) { $arguments += $resource }
     if($source -in @('QuotaStrip.cpp','ProviderProbe.cpp','ProviderEnvironmentTests.cpp')){$arguments+=(Join-Path $PSScriptRoot 'QuotaProvider.cpp')}
     # 守护管理程序会提权，导入 DLL 固定从系统目录加载。
     if ($Extra -eq 'QuotaGuard') { $arguments += @('/link','/SUBSYSTEM:WINDOWS','/DEPENDENTLOADFLAG:0x800','user32.lib') }
     elseif ($UiProbe -or $VisibilityTests -or $TrayIconTests -or $LayerTests -or $Extra) { $arguments += @('/link','user32.lib','gdi32.lib','shell32.lib','dwmapi.lib','comctl32.lib') }
     elseif (-not $Tests) { $arguments += @('/link','/SUBSYSTEM:WINDOWS','user32.lib','gdi32.lib','comctl32.lib','shell32.lib','advapi32.lib','dwmapi.lib','imm32.lib','uxtheme.lib') }
+    if ($sizeOptimized) { $arguments += @('/LTCG','/OPT:REF,ICF') }
     & $compiler @arguments
     if ($LASTEXITCODE -ne 0) { throw "Compilation failed with exit code $LASTEXITCODE" }
 } finally { Pop-Location }

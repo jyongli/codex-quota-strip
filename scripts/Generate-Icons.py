@@ -19,19 +19,32 @@ def main():
     sizes = (16, 24, 32, 48, 64, 128, 256, 512, 1024)
     # 先以两倍分辨率栅格化，再缩小；小尺寸保留抗锯齿，透明边缘不合成到背景色。
     with tempfile.TemporaryDirectory(prefix="quota-icon-") as temporary:
-        master = Path(temporary) / "master.png"
+        scratch = Path(temporary)
+        master = scratch / "master.png"
         convert("-background", "none", "-density", "192", directory / "app.svg", "-resize", "2048x2048", "-strip", "PNG32:" + str(master))
+        images = {}
         for size in sizes:
-            convert(master, "-resize", f"{size}x{size}", "-strip", "PNG32:" + str(directory / f"app-{size}.png"))
+            target = scratch / f"{size}.png"
+            convert(master, "-resize", f"{size}x{size}", "-strip",
+                    "-define", "png:compression-level=9", "-define", "png:compression-filter=5", "PNG32:" + str(target))
+            images[size] = target.read_bytes()
 
-    # ICO 同时携带七档尺寸，供资源管理器、任务栏和标题栏各自选择，避免仅缩放一张大图。
-    convert(*(directory / f"app-{size}.png" for size in sizes if size <= 256), "-strip", directory / "app.ico")
-    # macOS ICNS 容器直接封装带 alpha 的 PNG，并提供普通与 Retina 表示。
+    # 只提交三个平台直接使用的产物；所有尺寸保留透明像素，ICO 内使用 Windows 10 支持的 PNG。
+    ico_sizes = [size for size in sizes if size <= 256]
+    offset = 6 + 16 * len(ico_sizes)
+    entries = []
+    for size in ico_sizes:
+        entries.append(struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0, 1, 32, len(images[size]), offset))
+        offset += len(images[size])
+    (directory / "app.ico").write_bytes(struct.pack("<HHH", 0, 1, len(ico_sizes)) +
+                                       b"".join(entries) + b"".join(images[size] for size in ico_sizes))
+    (directory / "app-256.png").write_bytes(images[256])
+    # macOS 保留标准和 Retina 图标，避免靠删减分辨率缩小应用包。
     representations = {"icp4": 16, "icp5": 32, "icp6": 64, "ic07": 128, "ic08": 256, "ic09": 512, "ic10": 1024,
                        "ic11": 32, "ic12": 64, "ic13": 256, "ic14": 512}
     chunks = []
     for kind, size in representations.items():
-        image = (directory / f"app-{size}.png").read_bytes()
+        image = images[size]
         chunks.append(kind.encode("ascii") + struct.pack(">I", 8 + len(image)) + image)
     payload = b"".join(chunks)
     (directory / "app.icns").write_bytes(b"icns" + struct.pack(">I", 8 + len(payload)) + payload)

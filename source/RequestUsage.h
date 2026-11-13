@@ -38,7 +38,8 @@ public:
     explicit RequestTracker(long long minimumCompletedMs = 0) : minimumCompleted_(minimumCompletedMs) {}
     bool active() const { return active_.has_value(); }
     void reset() { thread_.clear(); previous_.reset(); latestQuota_ = {}; active_.reset(); seenStart_ = false; quotaDuring_ = false; lastTime_ = 0; finished_.clear(); finishedOrder_.clear(); }
-    void consume(const std::string&, const std::function<void(const RequestEntry&)>&);
+    void consume(const std::string&, const std::function<void(const RequestEntry&)>&,
+                 const std::function<void(const Snapshot&)>& = {});
 };
 class RequestStore {
     mutable std::mutex mutex_;
@@ -68,6 +69,8 @@ class MetadataLines {
 public:
     explicit MetadataLines(bool skipPartial = false, bool skipSessionContent = false) : discard_(skipPartial), skipSessionContent_(skipSessionContent) {}
     void reset(bool skipPartial = false) { pending_.clear(); discard_ = skipPartial; lexicalReset(); }
+    // 读完一批后释放正文留下的大容量；半行必须保留以接续下一次追加。
+    void releaseIdleStorage() { if (pending_.empty() && pending_.capacity() > 4096) std::string{}.swap(pending_); }
     template<class F> void feed(const char* bytes, size_t length, F accept) {
         for (size_t i = 0; i < length; ++i) {
             const char c = bytes[i];
@@ -210,14 +213,20 @@ inline void RequestTracker::finish(long long time, const std::string& status, co
     value.weeklyChange = history_detail::Difference(value.quotaEnd.weekly, value.quotaStart.weekly);
     if (accept) accept(value);
 }
-inline void RequestTracker::consume(const std::string& line, const std::function<void(const RequestEntry&)>& accept) {
+inline void RequestTracker::consume(const std::string& line, const std::function<void(const RequestEntry&)>& accept,
+                                    const std::function<void(const Snapshot&)>& publishQuota) {
     if (line.size() > 32768 || (line.find("token_count") == std::string::npos && line.find("task_started") == std::string::npos && line.find("task_complete") == std::string::npos && line.find("turn_aborted") == std::string::npos && line.find("turn_context") == std::string::npos && line.find("session_meta") == std::string::npos)) return;
     try {
         const auto root = JsonParser(line).parse(); const auto& payload = root.get("payload");
-        auto time = Timestamp(root.get("timestamp").str); if (time <= 0 || time < lastTime_) return;
+        auto time = Timestamp(root.get("timestamp").str); if (time <= 0) return;
         const auto& rootType = root.get("type").str;
-        if (rootType == "session_meta") { auto id = payload.get("id").str; if (request_detail::Label(id)) thread_ = id; return; }
         const auto& kind = payload.get("type").str;
+        // 配额采纳仍独立于请求的时间顺序；只解码一次 JSON 和额度字段，两条路径共用结果。
+        Snapshot snapshot; snapshot.observed = time;
+        const bool hasQuota = rootType == "event_msg" && kind == "token_count" && ReadLimits(payload, snapshot);
+        if (hasQuota && publishQuota) publishQuota(snapshot);
+        if (!accept || time < lastTime_) return;
+        if (rootType == "session_meta") { auto id = payload.get("id").str; if (request_detail::Label(id)) thread_ = id; return; }
         if (rootType != "turn_context" && rootType != "event_msg") return;
         if (rootType == "turn_context" || kind == "task_started") {
             auto id = payload.get("turn_id").str; if (id.empty() || !request_detail::Label(id)) return;
@@ -226,8 +235,7 @@ inline void RequestTracker::consume(const std::string& line, const std::function
             if (kind == "task_started") seenStart_ = true;
             auto model = payload.get("model").str; if (!model.empty() && request_detail::Label(model)) active_->model = model;
         } else if (kind == "token_count") {
-            Snapshot snapshot; snapshot.observed = time;
-            if (ReadLimits(payload, snapshot)) { latestQuota_ = snapshot; if (active_) quotaDuring_ = true; }
+            if (hasQuota) { latestQuota_ = snapshot; if (active_) quotaDuring_ = true; }
             const auto& info = payload.get("info"); TokenCounts total;
             if (!request_detail::Counts(info.get("total_token_usage"), total)) { if (active_ && info.kind != Json::Null) active_->partial = true; return; }
             if (active_) {

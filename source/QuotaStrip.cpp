@@ -65,7 +65,9 @@ std::wstring home, sessions, statusPath, settingsPath, windowClass, tipText, pai
 bool headless = false, leftSide = false, closing = false;
 bool showInCodex = false;
 bool hostMessagePending = false;
+bool recoveryArmed = false;
 std::atomic<bool> workerDone{false};
+std::atomic<bool> stateMessagePending{false};
 quota::Settings preferences;
 std::mutex preferencesMutex;
 std::atomic<bool> codexRunning{false};
@@ -93,11 +95,12 @@ void ShowHistoryPage(bool requests);
 void TranslateHistory();
 void LayoutHistory(HWND h);
 void RequestCloud(bool manual=false);
+void StartCloudIfEnabled();
 void UpdateState();
-void PositionStrip();
+void PositionStrip(bool publishStatus=true);
 quota::Settings GetPreferences(){std::lock_guard<std::mutex> lock(preferencesMutex);return preferences;}
-const wchar_t* Ui(const wchar_t* value){return quota::Translate(value,GetPreferences().english);}
-bool IsStale(const Data& s,long long now){return !s.snapshot.observed || now-s.snapshot.observed>=GetPreferences().staleMinutes*60000LL || (!s.watching&&!s.fromServer);}
+const wchar_t* Ui(const wchar_t* value){std::lock_guard<std::mutex> lock(preferencesMutex);return quota::Translate(value,preferences.english);}
+bool IsStale(const Data& s,long long now){std::lock_guard<std::mutex> lock(preferencesMutex);return !s.snapshot.observed || now-s.snapshot.observed>=preferences.staleMinutes*60000LL || (!s.watching&&!s.fromServer);}
 int px(int x) { return MulDiv(x, static_cast<int>(dpi), 96); }
 void SetApplicationIcons(WNDCLASSEXW& cls) {
     // 资源共享句柄由系统管理；窗口使用适合标题栏和任务栏的两档图标，不额外定时绘制。
@@ -139,7 +142,11 @@ quota::Window CurrentWindow(quota::Window w, long long now) {
     return w;
 }
 Data GetData() { std::lock_guard<std::mutex> lock(dataMutex); return data; }
-void SignalState() { if (controller) PostMessageW(controller, StateChanged, 0, 0); }
+void SignalState() {
+    // 并发日志和账户响应只需发布最新快照；诊断模式仍在处理后写出最新状态。
+    if (controller && !stateMessagePending.exchange(true) && !PostMessageW(controller, StateChanged, 0, 0))
+        stateMessagePending=false;
+}
 
 std::wstring LocalTime(long long milliseconds) {
     if (milliseconds <= 0) return Ui(L"尚无数据");
@@ -376,8 +383,10 @@ void AttachHost(HWND next) {
     if (!host) return;
     DWORD pid = 0; GetWindowThreadProcessId(host, &pid);
     constexpr DWORD flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
-    locationHook = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, nullptr, OnHostEvent, pid, 0, flags);
-    minimizeHook = SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, nullptr, OnHostEvent, pid, 0, flags);
+    if(showInCodex){
+        locationHook = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, nullptr, OnHostEvent, pid, 0, flags);
+        minimizeHook = SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, nullptr, OnHostEvent, pid, 0, flags);
+    }
     destroyHook = SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, nullptr, OnHostEvent, pid, 0, flags);
 }
 BOOL CALLBACK FindHost(HWND candidate, LPARAM result) {
@@ -390,30 +399,47 @@ void UpdateFonts(UINT nextDpi) {
     font = CreateFontW(-px(13), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
     smallFont = CreateFontW(-px(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
 }
-void PositionStrip() {
+void PositionStrip(bool publishStatus) {
     if (headless) return;
-    if(!window){
+    const auto config=GetPreferences();
+    const bool needHost=showInCodex||(config.online&&config.onlyWithCodex);
+    // 托盘模式不分配悬浮窗和提示框。仅窗口跟随或限定 Codex 在线时，才订阅宿主事件。
+    if(!showInCodex){
+        if(window){SetWindowLongPtrW(window,GWLP_HWNDPARENT,0);DestroyWindow(window);}
+        if(font){DeleteObject(font);font=nullptr;}
+        if(smallFont){DeleteObject(smallFont);smallFont=nullptr;}
+    }
+    if(!needHost){
+        if(foregroundHook){UnhookWinEvent(foregroundHook);foregroundHook=nullptr;}
+        AttachHost(nullptr);codexRunning=false;if(publishStatus)AtomicStatus(GetData());return;
+    }
+    // 本进程的设置、历史和目录对话框也会获得前台，须及时隐藏悬浮条。
+    if(!foregroundHook)foregroundHook=SetWinEventHook(EVENT_SYSTEM_FOREGROUND,EVENT_SYSTEM_FOREGROUND,nullptr,OnHostEvent,0,0,WINEVENT_OUTOFCONTEXT);
+    if(showInCodex&&!window){
         window=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,windowClass.c_str(),Ui(L"Codex 配额条 2.0"),WS_POPUP,0,0,236,26,nullptr,nullptr,instance,nullptr);lastVisible=false;
         // 显示条重建时一并重建其提示框；所属主窗口销毁不会遗留提示窗口。
         if(window){
             tooltip=CreateWindowExW(WS_EX_TOPMOST,TOOLTIPS_CLASSW,nullptr,WS_POPUP|TTS_ALWAYSTIP|TTS_NOPREFIX,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,window,nullptr,instance,nullptr);
             SendMessageW(tooltip,TTM_SETMAXTIPWIDTH,0,500);SendMessageW(tooltip,TTM_SETDELAYTIME,TTDT_INITIAL,450);
-            TOOLINFOW info{sizeof(info)};info.uFlags=TTF_IDISHWND|TTF_SUBCLASS;info.hwnd=window;info.uId=reinterpret_cast<UINT_PTR>(window);info.lpszText=const_cast<wchar_t*>(Ui(L"等待用量数据"));SendMessageW(tooltip,TTM_ADDTOOLW,0,reinterpret_cast<LPARAM>(&info));
+            TOOLINFOW info{sizeof(info)};info.uFlags=TTF_IDISHWND|TTF_SUBCLASS;info.hwnd=window;info.uId=reinterpret_cast<UINT_PTR>(window);info.lpszText=tipText.empty()?const_cast<wchar_t*>(Ui(L"等待用量数据")):tipText.data();SendMessageW(tooltip,TTM_ADDTOOLW,0,reinterpret_cast<LPARAM>(&info));
         }
     }
-    if(!window)return;
     HWND foreground = GetAncestor(GetForegroundWindow(), GA_ROOT);
     if (foreground != window && foreground != host && IsCodexWindow(foreground)) AttachHost(foreground);
     if (!host || !IsWindow(host)) { HWND found = nullptr; EnumWindows(FindHost, reinterpret_cast<LPARAM>(&found)); AttachHost(found); }
+    if(host&&(!destroyHook||(showInCodex!=static_cast<bool>(locationHook))||(showInCodex&&!minimizeHook))){
+        HWND existing=host;AttachHost(nullptr);AttachHost(existing);
+    }
     bool usableHost = host && IsWindowVisible(host) && !IsIconic(host);
     bool nowRunning=host&&IsWindow(host);
-    if(!codexRunning.exchange(nowRunning)&&nowRunning)RequestCloud();
+    if(codexRunning.exchange(nowRunning)!=nowRunning&&config.online&&config.onlyWithCodex)RequestCloud();
+    if(!window){if(publishStatus)AtomicStatus(GetData());return;}
     bool show = showInCodex && usableHost && foreground == host;
     if (!show) {
         if (lastVisible || IsWindowVisible(window)) ShowWindow(window, SW_HIDE);
         if (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         if (GetWindow(window, GW_OWNER)) SetWindowLongPtrW(window, GWLP_HWNDPARENT, 0);
-        lastVisible = false; AtomicStatus(GetData()); return;
+        lastVisible = false; if(publishStatus)AtomicStatus(GetData()); return;
     }
     // Ownership keeps the bar above this host without globally pinning it over other apps.
     bool ownerChanged = GetWindow(window, GW_OWNER) != host;
@@ -443,7 +469,7 @@ void PositionStrip() {
         SetWindowPos(window, HWND_TOP, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         lastPlacement = placement; InvalidateRect(window, nullptr, FALSE);
     } else SetWindowPos(window,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
-    lastVisible = true; AtomicStatus(GetData());
+    lastVisible = true; if(publishStatus)AtomicStatus(GetData());
 }
 COLORREF NumberColor(const quota::Window& w, bool stale) {
     if (!w.present || stale) return RGB(160,160,160);
@@ -558,14 +584,29 @@ void RemoveTray() {
     }
 }
 void ScheduleNextWake(const Data& s) {
-    KillTimer(controller, ExpiryTimer);
     auto now = quota::NowMs(); long long next = 0;
     auto consider = [&](long long at) { if (at > now && (!next || at < next)) next = at; };
     if (s.snapshot.fiveHour.present) consider(s.snapshot.fiveHour.resets * 1000);
     if (s.snapshot.weekly.present) consider(s.snapshot.weekly.resets * 1000);
     if (s.snapshot.observed) consider(s.snapshot.observed + GetPreferences().staleMinutes * 60000LL);
+    // 相同截止时间无需反复撤销和注册定时器；触发后由消息处理器重新计算。
+    if(next==nextWakeMs&&expiryTimerId)return;
+    if(expiryTimerId)KillTimer(controller,ExpiryTimer);
     nextWakeMs=next;expiryTimerId=0;expiryTimerError=0;
     if (next){SetLastError(0);expiryTimerId=SetTimer(controller,ExpiryTimer,static_cast<UINT>(std::clamp(next-now+25,100LL,2147483647LL)),nullptr);if(!expiryTimerId)expiryTimerError=GetLastError();}
+}
+void ScheduleRecovery(const Data& s) {
+    if(headless)return;
+    const auto config=GetPreferences();
+    const bool needHost=showInCodex||(config.online&&config.onlyWithCodex);
+    const bool needHostRetry=needHost&&(!host||!foregroundHook||!destroyHook||
+        (showInCodex&&(!window||!locationHook||!minimizeHook)));
+    const bool tokenMode=quota::NoSubscriptionQuota(s.accountMode);
+    const bool missingTray=(tokenMode?!trayAdded[0]:!trayAdded[1]||(!quota::WeeklyOnly(s.snapshot)&&!trayAdded[0]));
+    const bool retry=needHostRetry||missingTray||workerDone||!worker.joinable();
+    // 仅恢复缺失的窗口、监听器或托盘；健康且空闲时不运行周期检查。
+    if(retry&&!recoveryArmed)recoveryArmed=SetTimer(controller,RecoveryTimer,15000,nullptr)!=0;
+    else if(!retry&&recoveryArmed){KillTimer(controller,RecoveryTimer);recoveryArmed=false;}
 }
 void UpdateState() {
     auto s = GetData(); auto now = quota::NowMs();
@@ -593,8 +634,8 @@ void UpdateState() {
         SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&info));
     }
     UpdateTray(s);
-    PositionStrip();
-    ScheduleNextWake(s); AtomicStatus(s);
+    PositionStrip(false);
+    ScheduleNextWake(s); ScheduleRecovery(s); AtomicStatus(s);
     if(settingsWindow){
         std::wstring summary=std::wstring(Ui(L"更新 "))+LocalTime(s.snapshot.observed)+(s.fromServer?Ui(L" · 账户查询"):Ui(L" · 本地快照"));
         if(s.refreshing)summary+=Ui(L" · 正在刷新");
@@ -612,13 +653,17 @@ void UpdateState() {
     }
 }
 // 所有查询都由同一个工作线程合并，按钮只发事件，不阻塞 UI。
-void RequestCloud(bool manual){if(manual)manualRefresh=true;if(refreshEvent)SetEvent(refreshEvent);}
+void RequestCloud(bool manual){
+    if(manual&&GetPreferences().online)manualRefresh=true;
+    if(refreshEvent)SetEvent(refreshEvent);
+}
 void RefreshNow(){Reread();RequestCloud(true);}
 // 账户读取使用短生命周期 app-server，查询完成或取消后释放整棵子进程树。
 void CloudLoop(){
     unsigned failures=0;
     while(WaitForSingleObject(stopEvent,0)!=WAIT_OBJECT_0){
-        ResetEvent(refreshEvent);
+        // 读取最新配置前合并等待期间积累的事件，避免启动或防抖后再多查一次。
+        WaitForSingleObject(refreshEvent,0);
         auto config=GetPreferences();
         // 默认仅在本机 Codex 存在时查询。关闭在线刷新后，不创建任何查询进程。
         bool manual=manualRefresh.exchange(false);
@@ -648,14 +693,29 @@ void CloudLoop(){
             SignalState();
         }
         config=GetPreferences();
-        DWORD delay=config.online?static_cast<DWORD>(config.intervalSeconds*1000):INFINITE;
+        // Codex 关闭或在线功能禁用时阻塞等待变更，避免按查询间隔空唤醒。
+        DWORD delay=config.online&&(!config.onlyWithCodex||codexRunning.load())?static_cast<DWORD>(config.intervalSeconds*1000):INFINITE;
         // 失败自动退避到最多 15 分钟，手动刷新仍可以立即触发。
-        if(config.online&&failures)delay=static_cast<DWORD>(std::min<unsigned long long>(900000,static_cast<unsigned long long>(delay)<<std::min(failures,3u)));
+        if(delay!=INFINITE&&failures)delay=static_cast<DWORD>(std::min<unsigned long long>(900000,static_cast<unsigned long long>(delay)<<std::min(failures,3u)));
         HANDLE waits[]{stopEvent,refreshEvent};DWORD waited=WaitForMultipleObjects(2,waits,FALSE,delay);
         if(waited==WAIT_OBJECT_0||waited==WAIT_FAILED)break;
-        if(waited==WAIT_OBJECT_0+1)ResetEvent(refreshEvent);
         // 合并快速重复点击；最多每 5 秒开始一次真实查询。
         auto s=GetData();if(s.lastAttempt&&quota::NowMs()-s.lastAttempt<5000){if(WaitForSingleObject(stopEvent,static_cast<DWORD>(5000-(quota::NowMs()-s.lastAttempt)))==WAIT_OBJECT_0)break;}
+    }
+}
+// 在线查询首次开启才分配线程；从未启用查询的实例只运行界面和文件监听。
+void StartCloudIfEnabled(){
+    if(headless||cloudWorker.joinable()||!GetPreferences().online)return;
+    try {
+        cloudWorker=std::thread([]{
+            try{CloudLoop();}catch(...){
+                {std::lock_guard<std::mutex> lock(dataMutex);data.refreshing=false;data.queryError=L"账户刷新异常，请重启配额程序";}
+                SignalState();
+            }
+        });
+    }catch(const std::system_error&){
+        {std::lock_guard<std::mutex> lock(dataMutex);data.queryError=L"账户刷新异常，请重启配额程序";}
+        SignalState();
     }
 }
 
@@ -1080,7 +1140,7 @@ LRESULT CALLBACK SettingsProcedure(HWND h,UINT message,WPARAM wp,LPARAM lp){
             ConfigureHistory(config);
             if(previous.historyEnabled!=config.historyEnabled||previous.historyDirectory!=config.historyDirectory){std::lock_guard<std::mutex> lock(dataMutex);localMeter.reset(quota::NowMs());data.localUsage=localMeter.snapshot();}
             if(!config.online){std::lock_guard<std::mutex> lock(dataMutex);if(data.localSnapshot.observed&&!quota::NoSubscriptionQuota(data.accountMode)&&data.accountMode!=quota::AccountMode::SignedOut){data.snapshot=data.localSnapshot;data.fromServer=false;}}
-            TranslateSettings(h);lastVisible=false;PositionStrip();UpdateState();RequestCloud();SetWindowTextW(GetDlgItem(h,207),Ui(L"已保存并应用。"));return 0;
+            TranslateSettings(h);lastVisible=false;UpdateState();StartCloudIfEnabled();RequestCloud();SetWindowTextW(GetDlgItem(h,207),Ui(L"已保存并应用。"));return 0;
         }
         break;
     case WM_CLOSE:DestroyWindow(h);return 0;
@@ -1112,7 +1172,7 @@ void Command(UINT choice) {
         leftSide = choice == 2; paintedText.clear(); lastVisible = false;
         WritePrivateProfileStringW(L"display", L"position", leftSide ? L"left" : L"top", settingsPath.c_str());
         WritePrivateProfileStringW(L"display", L"surface", L"taskbar-and-codex", settingsPath.c_str());
-        PositionStrip(); UpdateState();
+        UpdateState();
     } else if (choice == 3) RefreshNow();
     else if (choice == 4) PostMessageW(controller, WM_CLOSE, 0, 0);
     else if (choice == 7) OpenSettings();
@@ -1121,8 +1181,8 @@ void Command(UINT choice) {
     else if (choice == 5 || choice == 6) {
         showInCodex = choice == 6;
         WritePrivateProfileStringW(L"display", L"surface", showInCodex ? L"taskbar-and-codex" : L"taskbar", settingsPath.c_str());
-        SetWindowLongPtrW(window, GWLP_HWNDPARENT, 0);
-        lastVisible = false; PositionStrip();
+        if(window)SetWindowLongPtrW(window, GWLP_HWNDPARENT, 0);
+        lastVisible = false; PositionStrip();ScheduleRecovery(GetData());
     }
     // 菜单与配置窗口共用一份显示设置，避免后续保存覆盖菜单选择。
     if(choice==1||choice==2||choice==5||choice==6){std::lock_guard<std::mutex> lock(preferencesMutex);preferences.showInCodex=showInCodex;preferences.leftSide=leftSide;}
@@ -1159,18 +1219,18 @@ LRESULT CALLBACK Procedure(HWND h, UINT message, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONDBLCLK: RefreshNow(); return 0;
     case WM_CONTEXTMENU: Menu(); return 0;
     case WM_COMMAND: Command(LOWORD(wp)); return 0;
-    case StateChanged: UpdateState(); return 0;
-    case HostChanged: hostMessagePending = false; PositionStrip(); return 0;
+    case StateChanged: stateMessagePending=false;UpdateState();return 0;
+    case HostChanged: hostMessagePending = false; PositionStrip();ScheduleRecovery(GetData());return 0;
     case TrayMessage: if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_LBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU || LOWORD(lp) == NIN_SELECT || LOWORD(lp) == NIN_KEYSELECT) Menu(); return 0;
     case WM_TIMER:
         if(wp==GuardOpTimer)CompleteGuardAction();
-        if(wp==ExpiryTimer){++timerFired;UpdateState();}
-        if(wp==RecoveryTimer){PositionStrip();if(workerDone)Reread();UpdateState();}
+        if(wp==ExpiryTimer){KillTimer(h,ExpiryTimer);expiryTimerId=0;++timerFired;UpdateState();}
+        if(wp==RecoveryTimer){if(workerDone)Reread();UpdateState();}
         return 0;
     case WM_DPICHANGED: UpdateFonts(HIWORD(wp)); lastVisible = false; PositionStrip(); return 0;
     case WM_CLOSE: if(controller)DestroyWindow(controller);return 0;
     case WM_DESTROY:
-        if(h!=controller){if(h==window){window=nullptr;tooltip=nullptr;lastVisible=false;if(!closing)PostMessageW(controller,HostChanged,0,0);}return 0;}
+        if(h!=controller){if(h==window){window=nullptr;tooltip=nullptr;lastVisible=false;if(!closing&&showInCodex)PostMessageW(controller,HostChanged,0,0);}return 0;}
         closing = true; SetEvent(stopEvent); KillTimer(h, ExpiryTimer);KillTimer(h,RecoveryTimer);KillTimer(h,GuardOpTimer);
         if(guardActionProcess){CloseHandle(guardActionProcess);guardActionProcess=nullptr;}
         UnhookHost();
@@ -1232,26 +1292,19 @@ int WINAPI wWinMain(HINSTANCE app, HINSTANCE, PWSTR, int) {
     if (!headless && !overridePosition) { wchar_t saved[16]; GetPrivateProfileStringW(L"display", L"position", L"top", saved, 16, settingsPath.c_str()); leftSide = std::wstring(saved) == L"left"; }
     if (!headless && !overrideVisibility) { wchar_t saved[32]; GetPrivateProfileStringW(L"display", L"surface", L"taskbar", saved, 32, settingsPath.c_str()); showInCodex = std::wstring(saved) == L"taskbar-and-codex"; }
     preferences.showInCodex=showInCodex;preferences.leftSide=leftSide;
-    quota::Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr)), rescan(CreateEventW(nullptr, TRUE, FALSE, nullptr)),refresh(CreateEventW(nullptr,TRUE,FALSE,nullptr));stopEvent=stop;rescanEvent=rescan;refreshEvent=refresh;
+    // 刷新事件由等待方自动消费，避免重置时吞掉并发的宿主／设置变更。
+    quota::Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr)), rescan(CreateEventW(nullptr, TRUE, FALSE, nullptr)),refresh(CreateEventW(nullptr,FALSE,FALSE,nullptr));stopEvent=stop;rescanEvent=rescan;refreshEvent=refresh;
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_WIN95_CLASSES}; InitCommonControlsEx(&controls);
     WNDCLASSEXW cls{sizeof(cls)}; cls.hInstance = instance; cls.lpfnWndProc = Procedure; cls.lpszClassName = windowClass.c_str(); cls.style = CS_DBLCLKS; cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    SetApplicationIcons(cls);
     if (!RegisterClassExW(&cls)) return 1;
     cls.lpszClassName=controllerClass.c_str();if(!RegisterClassExW(&cls))return 1;
     controller=CreateWindowExW(WS_EX_TOOLWINDOW,controllerClass.c_str(),Ui(L"Codex 配额控制器 2.0"),WS_POPUP,0,0,0,0,nullptr,nullptr,instance,nullptr);
     if(!controller)return 1;
-    UpdateFonts(96);
     if (!headless) {
-        taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated"); AddTray();
-        PositionStrip();
-        // 配置、历史和目录对话框也会获得前台；必须接收本进程事件，及时隐藏配额条避免遮挡输入。
-        foregroundHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, OnHostEvent, 0, 0, WINEVENT_OUTOFCONTEXT);
-        PositionStrip();
-        // 15 秒只检查窗口和监听器状态，不抓屏、不查询网络、不重新读取全量日志。
-        SetTimer(controller,RecoveryTimer,15000,nullptr);
+        taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     }
     UpdateState(); StartWorker();
-    cloudWorker=std::thread([]{try{CloudLoop();}catch(...){std::lock_guard<std::mutex> lock(dataMutex);data.refreshing=false;data.queryError=L"账户刷新异常，请重启配额程序";}});
+    StartCloudIfEnabled();
     if(openConfig)OpenSettings();
     if(openHistory||openRequests)ShowHistoryPage(openRequests);
     if(guardEligible)quota_guard::Notify(home);

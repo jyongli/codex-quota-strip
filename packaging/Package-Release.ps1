@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [Parameter(Mandatory)][string]$Commit,
     [Parameter(Mandatory)][string]$RunUrl,
-    [string]$Version = 'v3.0.0-preview.10'
+    [string]$Version = 'v3.0.0-preview.11'
 )
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
@@ -41,7 +41,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $windows $name) -Destination $portable
     }
     Write-Checksums $portable
-    Compress-Archive -LiteralPath @(Get-ChildItem -LiteralPath $portable -File | ForEach-Object FullName) -DestinationPath (Join-Path $OutputDirectory 'CodexQuotaStrip-windows-x64.zip')
+    Compress-Archive -LiteralPath @(Get-ChildItem -LiteralPath $portable -File | ForEach-Object FullName) -CompressionLevel Optimal -DestinationPath (Join-Path $OutputDirectory 'CodexQuotaStrip-windows-x64.zip')
 } finally {
     # 只清理本次创建并核实位于 TEMP 的 staging 目录。
     $tempBase=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar

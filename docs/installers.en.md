@@ -1,6 +1,6 @@
 # Choose an installer and supported environment
 
-[中文](installers.zh-CN.md) | **English** · [Download v3.0.0-preview.10](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.10)
+[中文](installers.zh-CN.md) | **English** · [Download v3.0.0-preview.11](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.11)
 
 Sign in through local Codex first. Minimum requirements below apply to the quota companion; your Codex version has its own system requirements. Quit the companion through its tray/menu-bar menu before updating or uninstalling.
 

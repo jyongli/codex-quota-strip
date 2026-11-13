@@ -10,7 +10,7 @@ It is intended for Codex desktop or CLI users who want visible quota values and 
 
 Built with C++17 and native platform interfaces, without Electron or WebView. Chinese/English can be selected in Settings and applied immediately. This is an independently running companion, not affiliated with OpenAI. See [README.md](README.md) for the Chinese guide.
 
-**[Download v3.0.0-preview.10](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.10)** · [What's new](docs/releases/v3.0.0-preview.10.en.md) · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
+**[Download v3.0.0-preview.11](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.11)** · [What's new](docs/releases/v3.0.0-preview.11.en.md) · [Choose an installer / compatibility / install and remove](docs/installers.en.md) · [Linux/macOS source builds](docs/native-desktop.en.md)
 
 Commands and detailed settings below primarily describe Windows. Use the separate native guide above for Linux/macOS.
 

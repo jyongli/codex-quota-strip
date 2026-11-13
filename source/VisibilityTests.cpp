@@ -10,11 +10,14 @@
 #include <vector>
 #include "QuotaCore.h"
 
-struct Target { DWORD pid = 0; HWND handle = nullptr; };
+struct Target { DWORD pid = 0; HWND handle = nullptr, controller = nullptr; };
 BOOL CALLBACK find(HWND h, LPARAM p) {
     auto& t = *reinterpret_cast<Target*>(p); DWORD pid = 0; GetWindowThreadProcessId(h, &pid);
     wchar_t cls[128]{}; GetClassNameW(h, cls, 128);
-    if (pid == t.pid && std::wstring(cls).find(L"CodexQuotaStrip_") == 0) { t.handle = h; return FALSE; }
+    if (pid == t.pid) {
+        if (std::wstring(cls).find(L"CodexQuotaStrip_") == 0) t.handle = h;
+        if (std::wstring(cls).find(L"QuotaController_") == 0) t.controller = h;
+    }
     return TRUE;
 }
 void check(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
@@ -54,14 +57,13 @@ int wmain(int argc, wchar_t** argv) {
         SetEnvironmentVariableW(L"LOCALAPPDATA", oldCount ? previousLocalAppData : nullptr);
         check(created != FALSE, "Visibility test helper must start");
         target.pid = process.dwProcessId;
-        for (int i = 0; i < 100 && !target.handle; ++i) { EnumWindows(find, reinterpret_cast<LPARAM>(&target)); Sleep(20); }
-        check(target.handle != nullptr, "Visibility test helper must expose its real native window");
-        check(WaitUntil(Hidden, target.handle), "Taskbar mode must leave the floating window hidden by default");
-        check((GetWindowLongPtrW(target.handle, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0, "Taskbar mode must never make a global topmost overlay");
         bool iconsAdded = false;
         for (int i = 0; i < 100; ++i) { if (State(fixture / L"status.json").get("tray_icons").num == 2) { iconsAdded = true; break; } Sleep(20); }
         check(iconsAdded, "Windows must register both numeric notification icons");
-        std::cout << "PASS: two taskbar icons registered while the floating window stays hidden\n";
+        EnumWindows(find, reinterpret_cast<LPARAM>(&target));
+        check(target.controller != nullptr, "Taskbar mode must retain its command window");
+        check(target.handle == nullptr, "Taskbar-only mode must not allocate an unused overlay window");
+        std::cout << "PASS: taskbar icons registered without allocating an overlay\n";
 
         // Only this test's small, temporary window is foregrounded; the user's app is restored.
         other = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Quota visibility test", WS_OVERLAPPEDWINDOW, 32, 64, 240, 100, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
@@ -74,14 +76,16 @@ int wmain(int argc, wchar_t** argv) {
         check(GetForegroundWindow() == other, "Quota strip must not steal focus");
         std::cout << "PASS: another foreground window is unobscured and retains focus\n";
 
-        SendMessageTimeoutW(target.handle, WM_COMMAND, 2, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
-        check(WaitUntil(Hidden, target.handle), "Optional in-Codex strip must stay hidden when another application is foreground");
+        SendMessageTimeoutW(target.controller, WM_COMMAND, 2, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
+        EnumWindows(find, reinterpret_cast<LPARAM>(&target));
+        check(target.handle && WaitUntil(Hidden, target.handle), "Optional in-Codex strip must be created on demand and stay hidden when another application is foreground");
         check((GetWindowLongPtrW(target.handle, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0, "Optional in-Codex strip must never be globally topmost");
         wchar_t saved[32]{};
         GetPrivateProfileStringW(L"display", L"surface", L"", saved, 32, (fixture / L"CodexQuotaStrip" / L"settings.ini").c_str());
         check(std::wstring(saved) == L"taskbar-and-codex", "Optional in-Codex choice must persist in isolated test settings");
-        SendMessageTimeoutW(target.handle, WM_COMMAND, 5, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
-        check(WaitUntil(Hidden, target.handle), "Taskbar-only menu option must keep the overlay hidden");
+        SendMessageTimeoutW(target.controller, WM_COMMAND, 5, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
+        check(!IsWindow(target.handle), "Returning to taskbar-only mode must release the overlay");
+        target.handle = nullptr;
         check(GetForegroundWindow() == other, "Changing visibility preference must preserve focus");
         std::cout << "PASS: taskbar-only and optional in-Codex choices persist without stealing focus\n";
 
@@ -92,14 +96,15 @@ int wmain(int argc, wchar_t** argv) {
         bool updated = false;
         for (int i = 0; i < 100; ++i) {
             auto state = State(fixture / L"status.json"); const auto& values = state.get("tray_values").elements;
-            if (values.size() == 2 && values[0].str == "-" && values[1].str == "12" && state.get("tray_icons").num == 2) { updated = true; break; }
+            if (values.size() == 2 && values[0].str.empty() && values[1].str == "12" && state.get("tray_icons").num == 1) { updated = true; break; }
             Sleep(20);
         }
-        check(updated, "A real quota event must refresh the taskbar digits and retain a hyphen for the missing five-hour window");
-        check(Hidden(target.handle), "A quota update must not open a floating window over another app");
+        check(updated, "A real quota event must refresh the weekly icon and hide the missing five-hour window");
+        EnumWindows(find, reinterpret_cast<LPARAM>(&target));
+        check(!target.handle, "A quota update must not allocate an overlay in taskbar-only mode");
         std::cout << "PASS: real quota event updated taskbar digits without opening an overlay\n";
 
-        SendMessageTimeoutW(target.handle, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
+        SendMessageTimeoutW(target.controller, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
         check(WaitForSingleObject(process.hProcess, 3000) == WAIT_OBJECT_0, "Test helper must exit normally");
         CloseHandle(process.hThread); CloseHandle(process.hProcess); process = {};
         DestroyWindow(other); other = nullptr;
@@ -107,7 +112,7 @@ int wmain(int argc, wchar_t** argv) {
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL: " << e.what() << "\n";
-        if (target.handle && IsWindow(target.handle)) SendMessageTimeoutW(target.handle, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG, 1000, nullptr);
+        if (target.controller && IsWindow(target.controller)) SendMessageTimeoutW(target.controller, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG, 1000, nullptr);
         if (process.hProcess) {
             if (WaitForSingleObject(process.hProcess, 3000) == WAIT_TIMEOUT) TerminateProcess(process.hProcess, 1);
             CloseHandle(process.hThread); CloseHandle(process.hProcess);

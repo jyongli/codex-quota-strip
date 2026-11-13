@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v3.0.0-preview.11 — 2026-11-13
+
+- Windows 仅在启用窗口跟随时创建悬浮条，首次启用在线刷新时创建查询线程，健康空闲时停用恢复检查。 / Allocate the Windows overlay and online query thread only when needed, and suspend recovery checks when healthy and idle.
+- Windows 共用额度与 Token 事件解析；三平台释放已读完大日志的缓冲，保留半行等待后续追加。 / Share Windows quota and token event parsing, and release completed large log buffers on all platforms while preserving partial lines.
+- 优化三平台发布编译与安装包压缩，移除多余图标中间文件，保留原有透明度、尺寸和兼容目标。 / Optimize release binaries and package compression, and remove intermediate icon files while retaining alpha, resolutions, and compatibility targets.
+
 ## v3.0.0-preview.10 — 2026-11-09
 
 - macOS 云端构建迁移至仍受支持的 macOS 15 镜像，最低部署目标保持 14.0。 / Move macOS hosted builds to the supported macOS 15 image while retaining the 14.0 deployment target.
