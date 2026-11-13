@@ -179,13 +179,17 @@ int main() { try {
     std::filesystem::create_directories(streamed);
     auto streamFile = streamed / ("request-usage-" + quota::history_detail::Day(quota::history_detail::Now()) + ".csv");
     auto pending = rows[0]; pending.turnId = "incomplete-tail";
-    auto pendingCsv = quota::request_detail::Serialize(pending); pendingCsv.pop_back();
+    auto pendingCsv = quota::request_detail::Serialize(pending); pendingCsv.resize(pendingCsv.size() / 2);
     { std::ofstream out(streamFile, std::ios::binary);
-      out << std::string(8160, 'x') << '\n' << quota::request_detail::Serialize(rows[0]) << pendingCsv; }
+      const auto& header = quota::request_detail::Header();
+      out << header << std::string(8159 - header.size(), 'x') << '\n' << quota::request_detail::Serialize(rows[0]) << pendingCsv; }
     quota::RequestStore streamedStore; streamedStore.configure(true, streamed);
     auto validRows = streamedStore.read();
     require(validRows.entries.size() == 1 && validRows.entries.front().turnId == rows[0].turnId &&
-        !streamedStore.record(rows[0]), "Chunked history and restart deduplication must agree on complete rows");
+        !streamedStore.record(rows[0]) && streamedStore.error().empty(),
+        "Chunked history and restart deduplication must agree on complete rows");
+    require(streamedStore.record(pending) && streamedStore.read().entries.size() == 2,
+        "An unfinished tail must not suppress or duplicate a later complete request");
 #ifdef _WIN32
     // 真实文件超过尾读上限，开始/上下文被正文挤出；完成事件仍必须保留为未知用量。
     auto tailFile = root / "rollout-2026-10-18T01-00-00-01234567-89ab-7cde-8fab-0123456789ab.jsonl"; quota::FileFollower follower;
