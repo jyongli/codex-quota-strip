@@ -10,7 +10,7 @@ Codex Quota Strip 是面向 Windows、Linux 和 macOS 的轻量桌面配额辅�
 
 程序使用 C++17 和原生系统界面，不依赖 Electron 或 WebView。中文／English 可在设置中切换并保存，立即生效。它是独立运行的辅助程序，与 OpenAI 没有官方隶属关系。英文说明见 [README.en.md](README.en.md)。
 
-**[下载 v3.0.0-preview.11](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.11)** · [本版更新](docs/releases/v3.0.0-preview.11.zh-CN.md) · [安装包选择／兼容环境／安装与卸载](docs/installers.zh-CN.md) · [Linux／macOS 构建](docs/native-desktop.zh-CN.md)
+**[下载 v3.0.0-preview.12](https://github.com/jyongli/codex-quota-strip/releases/tag/v3.0.0-preview.12)** · [本版更新](docs/releases/v3.0.0-preview.12.zh-CN.md) · [安装包选择／兼容环境／安装与卸载](docs/installers.zh-CN.md) · [Linux／macOS 构建](docs/native-desktop.zh-CN.md)
 
 下文的命令及详细配置主要针对 Windows；Linux／macOS 请使用上面的独立原生指南。
 

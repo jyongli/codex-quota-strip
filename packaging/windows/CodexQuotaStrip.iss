@@ -5,10 +5,10 @@
   #error PayloadRoot must be supplied by Build-WindowsInstaller.ps1
 #endif
 #ifndef AppVersion
-  #define AppVersion "3.0.0-preview.11"
+  #define AppVersion "3.0.0-preview.12"
 #endif
 #ifndef NumericVersion
-  #define NumericVersion "3.0.0.11"
+  #define NumericVersion "3.0.0.12"
 #endif
 #ifndef OutputRoot
   #define OutputRoot RepoRoot + "\dist"

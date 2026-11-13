@@ -14,7 +14,7 @@ struct LocalTokenUsage {
 };
 // 独立的有界身份缓存只由监听线程持有；UI仅复制上面的轻量数值快照。
 class LocalTokenMeter:public LocalTokenUsage {
-    std::set<std::string> identities_;
+    std::set<request_detail::RequestIdentity> identities_;
 public:
     explicit LocalTokenMeter(long long now=0){reset(now);}
     void reset(long long now){LocalTokenUsage::reset(now);identities_.clear();}
@@ -22,11 +22,11 @@ public:
     void add(const RequestEntry& entry) {
         if(entry.ended<sinceMs||entry.ended<=0)return;
         if(entry.turnId.empty()){partial=true;return;}
-        const auto identity=entry.threadId+'\n'+entry.turnId;
+        auto identity=request_detail::RequestKey(entry.threadId,entry.turnId);
         if(identities_.count(identity))return;
         // 此缓存不受历史写入缓存驱逐影响；旧起点前的请求不占用身份额度。
         if(requests>=LocalTokenUsageLimit){partial=true;return;}
-        identities_.insert(identity);
+        identities_.insert(std::move(identity));
         ++requests;
         if(!entry.tokens){++missingRequests;partial=true;return;}
         if(entry.tokens->total<0){++missingRequests;partial=true;return;}

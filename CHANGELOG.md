@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v3.0.0-preview.12
+
+- 请求去重以无损紧凑格式保存常见 UUID，淘汰队列不重复存储 ID。 / Store common UUIDs losslessly in a compact form without duplicating IDs in eviction queues.
+- 分块读取请求 CSV，重启后只加载去重所需字段；Windows 切换历史页时释放上一页快照。 / Stream request CSVs, load only identity data for replay protection, and release the previous Windows history view on page changes.
+
 ## v3.0.0-preview.11 — 2026-11-13
 
 - Windows 仅在启用窗口跟随时创建悬浮条，首次启用在线刷新时创建查询线程，健康空闲时停用恢复检查。 / Allocate the Windows overlay and online query thread only when needed, and suspend recovery checks when healthy and idle.

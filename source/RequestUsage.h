@@ -1,5 +1,6 @@
 #pragma once
 #include "QuotaHistory.h"
+#include "RequestIdentity.h"
 #include <functional>
 #include <set>
 
@@ -23,7 +24,12 @@ struct RequestEntry {
     // 本地 rollout 没有实际账单字段；保留空值，绝不按订阅百分比推算金额。
 };
 struct RequestReadResult { std::vector<RequestEntry> entries; bool truncated = false; std::string error; };
-namespace request_detail { inline RequestReadResult Read(const std::filesystem::path& directory, size_t maxRows); }
+namespace request_detail {
+struct TimedIdentity { long long ended; RequestIdentity key; };
+struct IdentityReadResult { std::vector<TimedIdentity> entries; bool truncated = false; std::string error; };
+inline RequestReadResult Read(const std::filesystem::path& directory, size_t maxRows);
+inline IdentityReadResult ReadIdentities(const std::filesystem::path& directory);
+}
 class RequestTracker {
     long long minimumCompleted_ = 0, lastTime_ = 0;
     std::string thread_;
@@ -31,13 +37,12 @@ class RequestTracker {
     Snapshot latestQuota_;
     std::optional<RequestEntry> active_;
     bool seenStart_ = false, quotaDuring_ = false;
-    std::set<std::string> finished_;
-    std::deque<std::string> finishedOrder_;
+    request_detail::RecentIdentities<request_detail::TurnIdentity, 128> finished_;
     void finish(long long time, const std::string& status, const std::function<void(const RequestEntry&)>& accept);
 public:
     explicit RequestTracker(long long minimumCompletedMs = 0) : minimumCompleted_(minimumCompletedMs) {}
     bool active() const { return active_.has_value(); }
-    void reset() { thread_.clear(); previous_.reset(); latestQuota_ = {}; active_.reset(); seenStart_ = false; quotaDuring_ = false; lastTime_ = 0; finished_.clear(); finishedOrder_.clear(); }
+    void reset() { thread_.clear(); previous_.reset(); latestQuota_ = {}; active_.reset(); seenStart_ = false; quotaDuring_ = false; lastTime_ = 0; finished_.clear(); }
     void consume(const std::string&, const std::function<void(const RequestEntry&)>&,
                  const std::function<void(const Snapshot&)>& = {});
 };
@@ -46,8 +51,7 @@ class RequestStore {
     bool enabled_ = false, loaded_ = false;
     std::filesystem::path directory_;
     std::string error_;
-    std::set<std::string> seen_;
-    std::deque<std::string> order_;
+    request_detail::RecentIdentities<request_detail::RequestIdentity, 4096> seen_;
 public:
     void configure(bool, const std::filesystem::path&);
     bool record(const RequestEntry&);
@@ -202,9 +206,7 @@ inline bool Parse(std::string line, RequestEntry& value) {
 inline void RequestTracker::finish(long long time, const std::string& status, const std::function<void(const RequestEntry&)>& accept) {
     if (!active_) return;
     auto value = *active_; active_.reset();
-    if (!finished_.insert(value.turnId).second) return;
-    finishedOrder_.push_back(value.turnId);
-    if (finishedOrder_.size() > 128) { finished_.erase(finishedOrder_.front()); finishedOrder_.pop_front(); }
+    if (!finished_.insert(request_detail::TurnKey(value.turnId))) return;
     if (time < minimumCompleted_ || time < value.started) return;
     value.ended = time; value.status = status; value.partial = value.partial || !seenStart_ || !value.tokens || status == "incomplete";
     if (quotaDuring_) value.quotaEnd = latestQuota_;
@@ -256,7 +258,7 @@ inline void RequestTracker::consume(const std::string& line, const std::function
         } else if (kind == "task_complete" || kind == "turn_aborted") {
             auto id = payload.get("turn_id").str;
             // 尾部上限可能跳过开始和上下文；保留已知完成事件，不能把整条请求静默丢掉。
-            if (!active_ && !id.empty() && request_detail::Label(id) && !finished_.count(id)) {
+            if (!active_ && !id.empty() && request_detail::Label(id) && !finished_.contains(request_detail::TurnKey(id))) {
                 RequestEntry missing; missing.threadId = thread_; missing.turnId = id; missing.partial = true;
                 active_ = missing; seenStart_ = false; quotaDuring_ = false;
             }
@@ -267,31 +269,36 @@ inline void RequestTracker::consume(const std::string& line, const std::function
 }
 inline void RequestStore::configure(bool enabled, const std::filesystem::path& directory) {
     std::lock_guard<std::mutex> guard(mutex_);
-    if (directory != directory_ || enabled != enabled_) { seen_.clear(); order_.clear(); error_.clear(); loaded_ = false; }
+    if (directory != directory_ || enabled != enabled_) { seen_.clear(); error_.clear(); loaded_ = false; }
     enabled_ = enabled; directory_ = directory;
 }
 inline bool RequestStore::record(const RequestEntry& value) {
     std::lock_guard<std::mutex> guard(mutex_);
+    if (!enabled_) return false;
     RequestEntry validated; const auto serialized = request_detail::Serialize(value);
-    if (!enabled_ || !request_detail::Parse(serialized.substr(0, serialized.size() - 1), validated)) return false;
+    if (!request_detail::Parse(serialized.substr(0, serialized.size() - 1), validated)) return false;
     // 首次写入前只读一次有上限的最近记录，重启后的文件重放不会重复追加。
     if (!loaded_) {
-        const auto existing = request_detail::Read(directory_, 2000);
+        auto existing = request_detail::ReadIdentities(directory_);
         if (!existing.error.empty()) { error_ = "Cannot write request usage; check directory and permissions"; return false; }
-        for (const auto& entry : existing.entries) { auto prior = entry.threadId + '\n' + entry.turnId; if (seen_.insert(prior).second) order_.push_back(prior); }
+        for (auto& entry : existing.entries) seen_.insert(std::move(entry.key));
         loaded_ = true;
     }
-    auto key = value.threadId + '\n' + value.turnId; if (seen_.count(key)) return false;
+    auto key = request_detail::RequestKey(value.threadId, value.turnId); if (seen_.contains(key)) return false;
     try {
         if (directory_.empty() || !directory_.is_absolute()) throw std::runtime_error("Invalid request directory");
         std::filesystem::create_directories(directory_);
         if (!history_detail::Append(directory_ / ("request-usage-" + history_detail::Day(history_detail::Now()) + ".csv"), serialized, request_detail::Header())) throw std::runtime_error("Request append failed");
-        seen_.insert(key); order_.push_back(key); if (order_.size() > 4096) { seen_.erase(order_.front()); order_.pop_front(); }
+        seen_.insert(std::move(key));
         error_.clear(); return true;
     } catch (...) { error_ = "Cannot write request usage; check directory and permissions"; return false; }
 }
-inline RequestReadResult request_detail::Read(const std::filesystem::path& directory, size_t maxRows) {
-    RequestReadResult result;
+namespace request_detail {
+// 列表与重启去重共用验证、读取上限和顺序；去重预热只保留结束时间与完整身份。
+template<class Result, class Project>
+inline Result ReadRecent(const std::filesystem::path& directory, size_t maxRows, Project project) {
+    Result result;
+    using Row = typename decltype(result.entries)::value_type;
     maxRows = std::min<size_t>(maxRows, 2000); if (!maxRows || directory.empty()) return result;
     size_t budget = 2 * 1024 * 1024; const auto now = history_detail::Now();
     try {
@@ -302,18 +309,49 @@ inline RequestReadResult request_detail::Read(const std::filesystem::path& direc
             std::ifstream in(path, std::ios::binary | std::ios::ate); if (!in) throw std::runtime_error("Request open failed");
             auto end = in.tellg(); if (end < 0) throw std::runtime_error("Request size failed");
             auto count = std::min<size_t>(static_cast<size_t>(end), budget); auto offset = static_cast<std::streamoff>(end) - static_cast<std::streamoff>(count);
-            std::string bytes(count, '\0'); in.seekg(offset); in.read(bytes.data(), static_cast<std::streamsize>(count)); bytes.resize(static_cast<size_t>(in.gcount())); budget -= count;
-            size_t at = 0; if (offset > 0) { result.truncated = true; auto nl = bytes.find('\n'); at = nl == std::string::npos ? bytes.size() : nl + 1; }
-            std::deque<RequestEntry> rows;
-            while (at < bytes.size()) { auto nl = bytes.find('\n', at); if (nl == std::string::npos) break; RequestEntry entry;
-                if (request_detail::Parse(bytes.substr(at, nl - at), entry)) { if (rows.size() == maxRows) { rows.pop_front(); result.truncated = true; } rows.push_back(std::move(entry)); } at = nl + 1;
+            budget -= count; in.seekg(offset);
+            if (!in) throw std::runtime_error("Request seek failed");
+            bool discard = offset > 0;
+            if (discard) result.truncated = true;
+            std::deque<Row> rows;
+            // 顺序分块读取，不把整个 CSV 尾部驻留内存；未完成行和超长行不入库。
+            char bytes[8192]; std::string line;
+            while (count) {
+                in.read(bytes, static_cast<std::streamsize>(std::min(count, sizeof(bytes))));
+                const auto read = static_cast<size_t>(in.gcount());
+                if (in.bad()) throw std::runtime_error("Request read failed");
+                if (!read) break;
+                count -= read;
+                for (size_t i = 0; i < read; ++i) {
+                    const char c = bytes[i];
+                    if (c == '\n') {
+                        RequestEntry entry;
+                        if (!discard && Parse(line, entry)) {
+                            if (rows.size() == maxRows) { rows.pop_front(); result.truncated = true; }
+                            rows.push_back(project(std::move(entry)));
+                        }
+                        discard = false; line.clear();
+                    } else if (!discard) {
+                        if (line.size() == 2048) { discard = true; line.clear(); }
+                        else line.push_back(c);
+                    }
+                }
             }
             for (auto row = rows.rbegin(); row != rows.rend(); ++row) { if (result.entries.size() == maxRows) { result.truncated = true; break; } result.entries.push_back(std::move(*row)); }
             if (result.entries.size() == maxRows) { result.truncated = true; break; }
         }
         if (!budget) result.truncated = true;
     } catch (...) { result.error = "Cannot read request usage; check directory and permissions"; }
-    std::stable_sort(result.entries.begin(), result.entries.end(), [](const RequestEntry& a, const RequestEntry& b) { return a.ended < b.ended; }); return result;
+    std::stable_sort(result.entries.begin(), result.entries.end(), [](const Row& a, const Row& b) { return a.ended < b.ended; }); return result;
+}
+inline RequestReadResult Read(const std::filesystem::path& directory, size_t maxRows) {
+    return ReadRecent<RequestReadResult>(directory, maxRows, [](RequestEntry&& row) { return std::move(row); });
+}
+inline IdentityReadResult ReadIdentities(const std::filesystem::path& directory) {
+    return ReadRecent<IdentityReadResult>(directory, 2000, [](RequestEntry&& row) {
+        return TimedIdentity{row.ended, RequestKey(row.threadId, row.turnId)};
+    });
+}
 }
 inline RequestReadResult RequestStore::read(size_t maxRows) const {
     std::lock_guard<std::mutex> guard(mutex_); return request_detail::Read(directory_, maxRows);
