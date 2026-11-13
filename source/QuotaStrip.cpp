@@ -83,6 +83,7 @@ UINT dpi = 96, taskbarCreated = 0;
 HWINEVENTHOOK foregroundHook = nullptr, locationHook = nullptr, minimizeHook = nullptr, destroyHook = nullptr;
 NOTIFYICONDATAW trays[2]{};
 bool trayAdded[2]{};
+bool trayUpdateFailed[2]{};
 std::wstring trayValues[2], trayRenderKeys[2], trayTips[2];
 unsigned long long trayIdentity = 0;
 RECT lastPlacement{};
@@ -536,9 +537,10 @@ void UpdateTray(const Data& s, bool force = false) {
     }();
     for (int i = 0; i < 2; ++i) {
         if ((i == 0 && quota::WeeklyOnly(s.snapshot))||(tokenMode&&i==1)) {
-            if (trayAdded[i]) Shell_NotifyIconW(NIM_DELETE, &trays[i]);
+            // 删除失败时保留标识，恢复定时器稍后重试；Explorer 重建时会清除旧登记。
+            if (trayAdded[i] && !Shell_NotifyIconW(NIM_DELETE, &trays[i])) { trayUpdateFailed[i]=true; continue; }
             if (trays[i].hIcon) DestroyIcon(trays[i].hIcon);
-            trays[i].hIcon = nullptr; trayAdded[i] = false; trayValues[i].clear(); trayRenderKeys[i].clear(); trayTips[i].clear();
+            trays[i].hIcon = nullptr; trayAdded[i] = false; trayUpdateFailed[i]=false; trayValues[i].clear(); trayRenderKeys[i].clear(); trayTips[i].clear();
             continue;
         }
         std::wstring full = quota::Remaining(values[i]), value = full;
@@ -551,12 +553,12 @@ void UpdateTray(const Data& s, bool force = false) {
         if (!values[i].present) tip += Ui(L"\n服务未提供此窗口，或等待重置后的新事件");
         if(tokenMode)tip=LocalTokenTip(s);
         if(tokenMode&&!s.queryError.empty())tip+=L"\n"+std::wstring(Ui(L"登录状态检查失败："))+Ui(s.queryError.c_str());
-        if (!force && trayAdded[i] && key == trayRenderKeys[i] && tip == trayTips[i]) continue;
+        if (!force && !trayUpdateFailed[i] && trayAdded[i] && key == trayRenderKeys[i] && tip == trayTips[i]) continue;
         bool redraw = force || key != trayRenderKeys[i] || !trays[i].hIcon;
         COLORREF tint = !values[i].present || stale ? RGB(175,175,175) : 100 - values[i].used <= 20 ? RGB(246,183,92) : i == 0 ? RGB(100,190,245) : RGB(105,210,160);
         if(tokenMode)tint=RGB(145,210,185);
         HICON image = redraw ? quota::MetricIcon(size, tokenMode?L"Tok":captions[i], value, tint) : trays[i].hIcon;
-        if (!image) continue;
+        if (!image) { trayUpdateFailed[i]=true; continue; }
         auto next = trays[i]; next.cbSize = sizeof(next); next.hWnd = controller; next.uID = i + 1;
         next.guidItem = quota::MetricGuid(hash, next.uID); next.uCallbackMessage = TrayMessage; next.hIcon = image;
         next.uFlags = NIF_GUID | NIF_TIP | NIF_SHOWTIP;
@@ -566,6 +568,7 @@ void UpdateTray(const Data& s, bool force = false) {
         bool added = !trayAdded[i];
         BOOL ok = Shell_NotifyIconW(added ? NIM_ADD : NIM_MODIFY, &next);
         if (!ok && !added) { added = true; next.uFlags |= NIF_MESSAGE | NIF_ICON; ok = Shell_NotifyIconW(NIM_ADD, &next); }
+        trayUpdateFailed[i]=!ok;
         if (ok) {
             if (added) { next.uVersion = NOTIFYICON_VERSION_4; Shell_NotifyIconW(NIM_SETVERSION, &next); }
             if (redraw && trays[i].hIcon) DestroyIcon(trays[i].hIcon);
@@ -603,7 +606,7 @@ void ScheduleRecovery(const Data& s) {
         (showInCodex&&(!window||!locationHook||!minimizeHook)));
     const bool tokenMode=quota::NoSubscriptionQuota(s.accountMode);
     const bool missingTray=(tokenMode?!trayAdded[0]:!trayAdded[1]||(!quota::WeeklyOnly(s.snapshot)&&!trayAdded[0]));
-    const bool retry=needHostRetry||missingTray||workerDone||!worker.joinable();
+    const bool retry=needHostRetry||missingTray||trayUpdateFailed[0]||trayUpdateFailed[1]||workerDone||!worker.joinable();
     // 仅恢复缺失的窗口、监听器或托盘；健康且空闲时不运行周期检查。
     if(retry&&!recoveryArmed)recoveryArmed=SetTimer(controller,RecoveryTimer,15000,nullptr)!=0;
     else if(!retry&&recoveryArmed){KillTimer(controller,RecoveryTimer);recoveryArmed=false;}
@@ -1222,6 +1225,13 @@ LRESULT CALLBACK Procedure(HWND h, UINT message, WPARAM wp, LPARAM lp) {
     case StateChanged: stateMessagePending=false;UpdateState();return 0;
     case HostChanged: hostMessagePending = false; PositionStrip();ScheduleRecovery(GetData());return 0;
     case TrayMessage: if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_LBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU || LOWORD(lp) == NIN_SELECT || LOWORD(lp) == NIN_KEYSELECT) Menu(); return 0;
+    case WM_TIMECHANGE:
+        if(h==controller){
+            // 相对定时器不会随系统时钟变化，重新计算重置点和旧数据提示。
+            if(expiryTimerId){KillTimer(h,ExpiryTimer);expiryTimerId=0;}
+            UpdateState();
+        }
+        return 0;
     case WM_TIMER:
         if(wp==GuardOpTimer)CompleteGuardAction();
         if(wp==ExpiryTimer){KillTimer(h,ExpiryTimer);expiryTimerId=0;++timerFired;UpdateState();}

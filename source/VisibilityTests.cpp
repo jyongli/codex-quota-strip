@@ -104,6 +104,14 @@ int wmain(int argc, wchar_t** argv) {
         check(!target.handle, "A quota update must not allocate an overlay in taskbar-only mode");
         std::cout << "PASS: real quota event updated taskbar digits without opening an overlay\n";
 
+        // 模拟系统时间变更通知；不修改宿主机时钟，仍走控制窗口的到期重算路径。
+        const auto statusPath = fixture / L"status.json";
+        const auto beforeClockChange = std::filesystem::last_write_time(statusPath);
+        SendMessageTimeoutW(target.controller, WM_TIMECHANGE, 0, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
+        check(std::filesystem::last_write_time(statusPath) != beforeClockChange &&
+            State(statusPath).get("weekly_remaining").num == 12,
+            "System time notification must recompute quota state without waiting for a log append");
+
         SendMessageTimeoutW(target.controller, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
         check(WaitForSingleObject(process.hProcess, 3000) == WAIT_OBJECT_0, "Test helper must exit normally");
         CloseHandle(process.hThread); CloseHandle(process.hProcess); process = {};

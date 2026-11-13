@@ -1,6 +1,6 @@
 # Codex Quota Strip
 
-<img src="assets/icons/app-128.png" alt="Codex Quota Strip application icon" width="72" height="72">
+<img src="assets/icons/app-256.png" alt="Codex Quota Strip application icon" width="72" height="72">
 
 [中文](README.md) | **English** · [MIT License](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 

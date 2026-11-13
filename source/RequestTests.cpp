@@ -183,6 +183,14 @@ int main() { try {
     quota::Snapshot quotaFromUsage;
     require(tracked.read(trackedFile.wstring(), [&](const auto& snapshot){ quotaFromUsage = snapshot; }, saveTracked), "active request fixture must read");
     require(quotaFromUsage.weekly.present && quotaFromUsage.weekly.used == 38, "A real token event with camel-case limits must update the quota while retaining request usage");
+    // JSON 字符串可使用 Unicode 转义；快速筛选不能丢掉原先可读的额度记录。
+    auto escapedType = firstWithQuota;
+    escapedType.replace(escapedType.find("token_count"), 11, "token_c\\u006funt");
+    const auto escapedFile = root / "escaped-event.jsonl";
+    { std::ofstream out(escapedFile, std::ios::binary); out << fresh(escapedType) << '\n'; }
+    quota::Snapshot escapedQuota;
+    require(follower.read(escapedFile.wstring(), [&](const auto& snapshot){ escapedQuota = snapshot; }) &&
+        escapedQuota.weekly.present && escapedQuota.weekly.used == 38, "Escaped event types must still publish valid quota");
     { std::ofstream out(trackedFile, std::ios::binary | std::ios::app); out << fresh(event("{\"type\":\"task_complete\",\"turn_id\":\"tracked-large\",\"last_agent_message\":\"" + std::string(400 * 1024, 'x') + "\"}")) << '\n'; }
     tracked.read(trackedFile.wstring(), {}, saveTracked);
     require(trackedRows.size() == 1 && trackedRows.front().tokens && trackedRows.front().tokens->total == 130 && !trackedRows.front().partial, "an already tracked request must survive a single 400KiB final-response append");
