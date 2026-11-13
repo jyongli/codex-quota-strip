@@ -191,6 +191,15 @@ int main() { try {
     quota::Snapshot escapedQuota;
     require(follower.read(escapedFile.wstring(), [&](const auto& snapshot){ escapedQuota = snapshot; }) &&
         escapedQuota.weekly.present && escapedQuota.weekly.used == 38, "Escaped event types must still publish valid quota");
+    quota::RequestTracker ordered;
+    std::vector<quota::RequestEntry> orderedRows;
+    const auto collectOrdered = [&](const auto& row){orderedRows.push_back(row);};
+    auto unrelated = event("{\"type\":\"unrelated\",\"rate_limits\":{}}");
+    unrelated.replace(unrelated.find("01:00:00Z"), 9, "01:00:05Z");
+    ordered.consume(event("{\"type\":\"task_started\",\"turn_id\":\"ordered\"}"), collectOrdered);
+    ordered.consume(unrelated, collectOrdered, [](const auto&){});
+    ordered.consume(event("{\"type\":\"task_complete\",\"turn_id\":\"ordered\"}"), collectOrdered);
+    require(orderedRows.size()==1, "An unrelated quota candidate must not advance the request timeline");
     { std::ofstream out(trackedFile, std::ios::binary | std::ios::app); out << fresh(event("{\"type\":\"task_complete\",\"turn_id\":\"tracked-large\",\"last_agent_message\":\"" + std::string(400 * 1024, 'x') + "\"}")) << '\n'; }
     tracked.read(trackedFile.wstring(), {}, saveTracked);
     require(trackedRows.size() == 1 && trackedRows.front().tokens && trackedRows.front().tokens->total == 130 && !trackedRows.front().partial, "an already tracked request must survive a single 400KiB final-response append");

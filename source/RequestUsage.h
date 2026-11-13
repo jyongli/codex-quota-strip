@@ -216,11 +216,11 @@ inline void RequestTracker::finish(long long time, const std::string& status, co
 inline void RequestTracker::consume(const std::string& line, const std::function<void(const RequestEntry&)>& accept,
                                     const std::function<void(const Snapshot&)>& publishQuota) {
     if (line.size() > 32768) return;
-    if (line.find("token_count") == std::string::npos && line.find("task_started") == std::string::npos &&
-        line.find("task_complete") == std::string::npos && line.find("turn_aborted") == std::string::npos &&
-        line.find("turn_context") == std::string::npos && line.find("session_meta") == std::string::npos &&
-        // 类型字符串可能带 Unicode 转义；仍允许带原有额度键的候选进入 JSON 校验。
-        !(publishQuota && (line.find("rate_limits") != std::string::npos || line.find("rateLimits") != std::string::npos))) return;
+    const bool requestCandidate = line.find("token_count") != std::string::npos || line.find("task_started") != std::string::npos ||
+        line.find("task_complete") != std::string::npos || line.find("turn_aborted") != std::string::npos ||
+        line.find("turn_context") != std::string::npos || line.find("session_meta") != std::string::npos;
+    // 类型字符串可能带 Unicode 转义；额度候选可独立进入 JSON 校验，但不推进请求时间线。
+    if (!requestCandidate && !(publishQuota && (line.find("rate_limits") != std::string::npos || line.find("rateLimits") != std::string::npos))) return;
     try {
         const auto root = JsonParser(line).parse(); const auto& payload = root.get("payload");
         auto time = Timestamp(root.get("timestamp").str); if (time <= 0) return;
@@ -230,7 +230,7 @@ inline void RequestTracker::consume(const std::string& line, const std::function
         Snapshot snapshot; snapshot.observed = time;
         const bool hasQuota = rootType == "event_msg" && kind == "token_count" && ReadLimits(payload, snapshot);
         if (hasQuota && publishQuota) publishQuota(snapshot);
-        if (!accept || time < lastTime_) return;
+        if (!accept || !requestCandidate || time < lastTime_) return;
         if (rootType == "session_meta") { auto id = payload.get("id").str; if (request_detail::Label(id)) thread_ = id; return; }
         if (rootType != "turn_context" && rootType != "event_msg") return;
         if (rootType == "turn_context" || kind == "task_started") {
