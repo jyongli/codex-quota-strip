@@ -61,6 +61,16 @@ int main() { try {
     require(local.tokens==130&&local.requests==1&&quota::LocalTokenValue(local)=="130","Local meter must count confirmed total once without adding cached or reasoning subsets");
     local.add(completed);
     require(local.tokens==130&&local.requests==1,"Meter identity must independently reject replay even if the persistence cache has evicted its key");
+    // 紧凑 UUID 必须按原始大小写和完整的会话／请求组合去重。
+    quota::LocalTokenMeter uuidMeter;
+    auto uuid = completed;
+    uuid.threadId = "01234567-89ab-7cde-8fab-0123456789ab";
+    uuid.turnId = "01234567-89ab-7cde-8fab-0123456789ac";
+    uuidMeter.add(uuid); uuidMeter.add(uuid);
+    uuid.turnId.back() = 'C'; uuidMeter.add(uuid);
+    uuid.threadId.back() = 'c'; uuidMeter.add(uuid);
+    uuid.turnId.back() = 'c'; uuidMeter.add(uuid);
+    require(uuidMeter.requests == 4 && uuidMeter.tokens == 520, "UUID identity must preserve spelling and the entire thread/turn pair");
     auto unknown=completed;unknown.turnId="unknown-turn";unknown.tokens.reset();local.add(unknown);
     require(local.tokens==130&&local.missingRequests==1&&quota::LocalTokenValue(local)=="130+","Missing request tokens must mark a lower bound instead of adding a fabricated zero");
     require(quota::LocalTokenValue(local,false)=="-","Disabled or failed recording must not claim zero usage");
@@ -164,6 +174,18 @@ int main() { try {
     store.configure(true, unicode);
     for (int i = 0; i < 2005; ++i) { newer.turnId = "row-" + std::to_string(i); newer.ended += 1; require(store.record(newer), "bounded history fixture append"); }
     auto bounded = store.read(); require(bounded.entries.size() == 2000 && bounded.truncated && store.read(3).entries.size() == 3 && store.read(0).entries.empty(), "request viewer must bound rows and report truncation");
+    // 有效记录跨读取块仍可读取；超长行与未写完的尾行不能阻断前面的历史或占去重名额。
+    auto streamed = root / "streamed";
+    std::filesystem::create_directories(streamed);
+    auto streamFile = streamed / ("request-usage-" + quota::history_detail::Day(quota::history_detail::Now()) + ".csv");
+    auto pending = rows[0]; pending.turnId = "incomplete-tail";
+    auto pendingCsv = quota::request_detail::Serialize(pending); pendingCsv.pop_back();
+    { std::ofstream out(streamFile, std::ios::binary);
+      out << std::string(8160, 'x') << '\n' << quota::request_detail::Serialize(rows[0]) << pendingCsv; }
+    quota::RequestStore streamedStore; streamedStore.configure(true, streamed);
+    auto validRows = streamedStore.read();
+    require(validRows.entries.size() == 1 && validRows.entries.front().turnId == rows[0].turnId &&
+        !streamedStore.record(rows[0]), "Chunked history and restart deduplication must agree on complete rows");
 #ifdef _WIN32
     // 真实文件超过尾读上限，开始/上下文被正文挤出；完成事件仍必须保留为未知用量。
     auto tailFile = root / "rollout-2026-10-18T01-00-00-01234567-89ab-7cde-8fab-0123456789ab.jsonl"; quota::FileFollower follower;

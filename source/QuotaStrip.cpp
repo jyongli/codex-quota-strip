@@ -790,7 +790,13 @@ void PopulateHistory(){
     SetWindowTextW(GetDlgItem(historyWindow,408),explanation.c_str());
     InvalidateRect(GetDlgItem(historyWindow,405),nullptr,FALSE);
 }
-void RefreshHistory(){if(historyRequests){requestRows=requestStore.read();quota::ResolveRequestConversations(std::filesystem::path(home),requestRows.entries);}else historyRows=historyStore.read();PopulateHistory();}
+void RefreshHistory(){
+    // 两个页面按需读取；切页先释放旧快照，列表和图表继续共享当前页数据。
+    historyRows=quota::HistoryReadResult{}; requestRows=quota::RequestReadResult{};
+    if(historyRequests){requestRows=requestStore.read();quota::ResolveRequestConversations(std::filesystem::path(home),requestRows.entries);}
+    else historyRows=historyStore.read();
+    PopulateHistory();
+}
 void TranslateHistory(){
     if(!historyWindow)return;
     SetWindowTextW(historyWindow,Ui(historyRequests?L"Codex 配额 — 工作请求":L"Codex 配额 — 额度变化"));
