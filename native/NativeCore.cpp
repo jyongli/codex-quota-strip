@@ -249,6 +249,7 @@ class SessionWatcher {
                         file.tracker.consume(line, [&](const quota::RequestEntry& entry) { auto value=entry;if(value.threadId.empty())value.threadId=quota::request_detail::ThreadFromFile(path);accept_(configuration.generation, value); });
                     });
                 }
+                file.lines.releaseIdleStorage();
             };
             auto discover = [&](const std::filesystem::path& directory) {
                 std::vector<std::pair<long long, std::filesystem::path>> candidates; size_t budget = 8192;

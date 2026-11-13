@@ -39,12 +39,17 @@ int wmain(int argc,wchar_t** argv){
     auto clean=[&]{if(target.controller)SendMessageTimeoutW(target.controller,WM_CLOSE,0,0,SMTO_ABORTIFHUNG,2000,nullptr);for(auto process:{app,fixture})if(process.hProcess){if(WaitForSingleObject(process.hProcess,2000)==WAIT_TIMEOUT)TerminateProcess(process.hProcess,0);WaitForSingleObject(process.hProcess,2000);CloseHandle(process.hThread);CloseHandle(process.hProcess);}if(IsWindow(original))SetForegroundWindow(original);std::error_code error;std::filesystem::remove_all(root,error);};
     try{
         std::filesystem::copy_file(std::filesystem::absolute(argv[0]),binary,std::filesystem::copy_options::overwrite_existing);
-        {std::ofstream out(root/L"CodexQuotaStrip/settings.ini");out<<"[refresh]\nonline=1\nonly_with_codex=0\nseconds=3600\n";}
+        {std::ofstream out(root/L"CodexQuotaStrip/settings.ini");out<<"[refresh]\nonline=0\nonly_with_codex=0\nseconds=3600\n";}
         auto mode=[&](const char* value){std::ofstream out(root/L"mode.txt");out<<value;};mode("api");
         STARTUPINFOW start{};start.cb=sizeof(start);std::wstring command=L"\""+binary.wstring()+L"\" --fixture-hold";
         require(CreateQuotaFixtureProcess(command,root,start,fixture)!=FALSE,"Synthetic Codex binary must launch");
         command=L"\""+std::filesystem::absolute(argv[1]).wstring()+L"\" --home \""+root.wstring()+L"\" --status \""+status.wstring()+L"\" --settings";
         require(CreateQuotaFixtureProcess(command,root,start,app)!=FALSE,"Token UI fixture must launch");target.pid=app.dwProcessId;
+        require(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&target));return target.settings&&state(status).get("watching").num;}),"Offline fixture must start watching before its first online query");
+        require(state(status).get("account_mode").str=="unknown","Offline startup must not query the account");
+        // 首次启用在线查询必须立即启动账户读取，无需重启程序。
+        SendMessageW(GetDlgItem(target.settings,201),BM_SETCHECK,BST_CHECKED,0);
+        SendMessageW(target.settings,WM_COMMAND,302,0);
         require(wait([&]{EnumWindows(find,reinterpret_cast<LPARAM>(&target));auto current=state(status);return target.settings&&current.get("account_mode").str=="api-key"&&current.get("local_token_available").num;}),"API login must expose explicit mode with the local watcher ready");
         auto api=state(status);require(api.get("tray_icons").num==1&&api.get("tray_values").elements[0].str=="0","API mode must show a numeric local Token meter instead of a static API label");
         require(wait([&]{return caption(GetDlgItem(target.settings,211))==L"0"&&caption(GetDlgItem(target.settings,212))==L"—"&&IsWindowVisible(GetDlgItem(target.settings,212));}),"Settings must show local used tokens and unknown remaining balance directly");

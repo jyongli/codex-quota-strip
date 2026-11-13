@@ -59,15 +59,21 @@ public:
         LARGE_INTEGER start{}; start.QuadPart = c.offset;
         if (!SetFilePointerEx(file, start, nullptr, FILE_BEGIN)) return false;
         char bytes[16384]; long long remaining = end.QuadPart - c.offset;
+        // 回调在读当前文件期间复用，避免每行重新构造；会话 ID 仍按需从文件名补全。
+        std::function<void(const RequestEntry&)> reportRequest;
+        if (request) reportRequest = [&](const RequestEntry& entry) {
+            if (!entry.threadId.empty()) { request(entry); return; }
+            auto value = entry; value.threadId = request_detail::ThreadFromFile(std::filesystem::path(name)); request(value);
+        };
         while (remaining > 0) {
             DWORD count = 0; DWORD wanted = static_cast<DWORD>(std::min<long long>(remaining, sizeof(bytes)));
             if (!ReadFile(file, bytes, wanted, &count, nullptr) || !count) break;
             c.offset += count; remaining -= count; bytesRead += count; ++reads;
             c.lines.feed(bytes, count, [&](const std::string& line) {
-                Snapshot snapshot; if (ParseEvent(line, snapshot) && accept) accept(snapshot);
-                if (request) c.requests.consume(line, [&](const RequestEntry& entry){auto value=entry;if(value.threadId.empty())value.threadId=request_detail::ThreadFromFile(std::filesystem::path(name));request(value);});
+                c.requests.consume(line, reportRequest, accept);
             });
         }
+        c.lines.releaseIdleStorage();
         if (files.size() > 64) {
             auto oldest = files.begin(); for (auto it = files.begin(); it != files.end(); ++it) if (it->second.touched < oldest->second.touched) oldest = it;
             files.erase(oldest);
@@ -87,20 +93,24 @@ inline std::vector<std::wstring> RecentFiles(const std::wstring& root) {
         if (find == INVALID_HANDLE_VALUE) return;
         do {
             if (item.cFileName[0] == L'.') continue;
-            std::wstring path = dir + L"\\" + item.cFileName;
             if (item.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;
-            if (item.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) self(self, path, depth + 1);
-            else if (path.size() >= 6 && path.compare(path.size() - 6, 6, L".jsonl") == 0) {
+            if (item.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) self(self, dir + L"\\" + item.cFileName, depth + 1);
+            else {
+                const std::wstring_view name(item.cFileName);
+                if (name.size() < 6 || name.substr(name.size() - 6) != L".jsonl") continue;
                 ULARGE_INTEGER t{}; t.HighPart = item.ftLastWriteTime.dwHighDateTime; t.LowPart = item.ftLastWriteTime.dwLowDateTime;
-                latest.push_back({path, t.QuadPart});
-                std::sort(latest.begin(), latest.end(), [](const Entry& a, const Entry& b) { return a.modified > b.modified; });
+                // 大部分文件比候选尾部更旧；跳过它们，不为每个文件重新排序整个候选表。
+                if (latest.size() == 24 && t.QuadPart <= latest.back().modified) continue;
+                auto at = std::upper_bound(latest.begin(), latest.end(), t.QuadPart,
+                    [](unsigned long long modified, const Entry& entry) { return modified > entry.modified; });
+                latest.insert(at, {dir + L"\\" + item.cFileName, t.QuadPart});
                 if (latest.size() > 24) latest.pop_back();
             }
         } while (FindNextFileW(find, &item));
         FindClose(find);
     };
     walk(walk, root, 0);
-    std::vector<std::wstring> paths; for (const auto& f : latest) paths.push_back(f.path);
+    std::vector<std::wstring> paths; paths.reserve(latest.size()); for (auto& f : latest) paths.push_back(std::move(f.path));
     return paths;
 }
 }

@@ -178,8 +178,28 @@ int main() { try {
     require(tails.size() == 1 && tails[0].threadId=="01234567-89ab-7cde-8fab-0123456789ab" && tails[0].turnId == "huge-tail" && tails[0].partial && tails[0].started == 0 && !tails[0].tokens && follower.bytesRead <= 256 * 1024, "bounded real file tail must preserve source identity and partial completion without reading full conversation");
     auto trackedFile = root / "large-completion.jsonl"; quota::FileFollower tracked; std::vector<quota::RequestEntry> trackedRows;
     auto saveTracked = [&](const auto& row) { trackedRows.push_back(row); };
-    { std::ofstream out(trackedFile, std::ios::binary); out << fresh(event("{\"type\":\"task_started\",\"turn_id\":\"tracked-large\"}")) << '\n' << fresh(firstUsage()) << '\n'; }
-    require(tracked.read(trackedFile.wstring(), {}, saveTracked), "active request fixture must read");
+    auto firstWithQuota = firstUsage(); firstWithQuota.insert(firstWithQuota.size() - 2, ",\"rateLimits\":{\"primary\":{\"usedPercent\":38,\"windowDurationMins\":10080}}");
+    { std::ofstream out(trackedFile, std::ios::binary); out << fresh(event("{\"type\":\"task_started\",\"turn_id\":\"tracked-large\"}")) << '\n' << fresh(firstWithQuota) << '\n'; }
+    quota::Snapshot quotaFromUsage;
+    require(tracked.read(trackedFile.wstring(), [&](const auto& snapshot){ quotaFromUsage = snapshot; }, saveTracked), "active request fixture must read");
+    require(quotaFromUsage.weekly.present && quotaFromUsage.weekly.used == 38, "A real token event with camel-case limits must update the quota while retaining request usage");
+    // JSON 字符串可使用 Unicode 转义；快速筛选不能丢掉原先可读的额度记录。
+    auto escapedType = firstWithQuota;
+    escapedType.replace(escapedType.find("token_count"), 11, "token_c\\u006funt");
+    const auto escapedFile = root / "escaped-event.jsonl";
+    { std::ofstream out(escapedFile, std::ios::binary); out << fresh(escapedType) << '\n'; }
+    quota::Snapshot escapedQuota;
+    require(follower.read(escapedFile.wstring(), [&](const auto& snapshot){ escapedQuota = snapshot; }) &&
+        escapedQuota.weekly.present && escapedQuota.weekly.used == 38, "Escaped event types must still publish valid quota");
+    quota::RequestTracker ordered;
+    std::vector<quota::RequestEntry> orderedRows;
+    const auto collectOrdered = [&](const auto& row){orderedRows.push_back(row);};
+    auto unrelated = event("{\"type\":\"unrelated\",\"rate_limits\":{}}");
+    unrelated.replace(unrelated.find("01:00:00Z"), 9, "01:00:05Z");
+    ordered.consume(event("{\"type\":\"task_started\",\"turn_id\":\"ordered\"}"), collectOrdered);
+    ordered.consume(unrelated, collectOrdered, [](const auto&){});
+    ordered.consume(event("{\"type\":\"task_complete\",\"turn_id\":\"ordered\"}"), collectOrdered);
+    require(orderedRows.size()==1, "An unrelated quota candidate must not advance the request timeline");
     { std::ofstream out(trackedFile, std::ios::binary | std::ios::app); out << fresh(event("{\"type\":\"task_complete\",\"turn_id\":\"tracked-large\",\"last_agent_message\":\"" + std::string(400 * 1024, 'x') + "\"}")) << '\n'; }
     tracked.read(trackedFile.wstring(), {}, saveTracked);
     require(trackedRows.size() == 1 && trackedRows.front().tokens && trackedRows.front().tokens->total == 130 && !trackedRows.front().partial, "an already tracked request must survive a single 400KiB final-response append");

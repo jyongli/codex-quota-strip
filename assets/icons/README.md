@@ -6,7 +6,7 @@
 
 - `app.ico`: Windows EXE, native windows, shortcuts and installer (16/24/32/48/64/128/256 px).
 - `app.icns`: macOS application bundle, with standard and Retina representations through 1024 px.
-- `app-*.png` and `app.svg`: Linux launchers/windows and documentation.
+- `app-256.png` and `app.svg`: Linux launchers and windows. Other raster sizes are generated in a temporary directory.
 
 Generated files are committed. Normal app builds and runtime do not require Python or ImageMagick. To regenerate from the SVG, install Python 3 and ImageMagick 7, then run from the repository root:
 
